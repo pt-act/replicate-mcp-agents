@@ -1,0 +1,13 @@
+site_name: Replicate MCP Agents
+site_url: https://your-org.github.io/replicate-mcp-agents/
+nav:
+  - Getting Started: docs/getting-started.md
+  - MCP Integration: docs/mcp-integration.md
+  - Workflow Guide: docs/workflow-guide.md
+theme:
+  name: material
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true

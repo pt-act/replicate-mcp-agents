@@ -1,0 +1,28 @@
+name: research_synthesis
+description: Multi-agent pipeline for synthesising research findings
+
+agents:
+  - id: orchestrator
+    model: anthropic/claude-4.5-sonnet
+    role: orchestrator
+    streaming: true
+  - id: searcher
+    model: perplexity/sonar-large-online
+    role: specialist
+  - id: analyst
+    model: openai/gpt-4.1-mini
+    role: analyst
+  - id: summariser
+    model: google/gemini-1.5-pro
+    role: summariser
+
+edges:
+  - from: orchestrator
+    to: searcher
+    transform: "lambda x: {'query': x['topic']}"
+  - from: searcher
+    to: analyst
+    transform: "lambda x: {'sources': x['results']}"
+  - from: analyst
+    to: summariser
+    transform: "lambda x: {'analysis': x['report']}"
