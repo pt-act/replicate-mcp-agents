@@ -12,26 +12,28 @@ import logging
 import os
 from typing import Any
 
+from replicate_mcp import __version__
 from replicate_mcp.agents.execution import AgentExecutor
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Registry bootstrap — register a default agent so the server always has
-# at least one tool available for demonstration purposes.
+# Registry bootstrap — register default agents so the server always has
+# tools available for demonstration purposes.
 # ---------------------------------------------------------------------------
 
 _registry = AgentRegistry()
 _executor = AgentExecutor()
 
-_registry.register(
+_DEFAULT_AGENTS: list[AgentMetadata] = [
     AgentMetadata(
         safe_name="llama3_chat",
         description=(
             "Chat with Meta Llama 3 — a general-purpose large language model. "
             "Provide a 'prompt' string and receive a text completion."
         ),
+        model="meta/meta-llama-3-70b-instruct",
         input_schema={
             "type": "object",
             "properties": {
@@ -45,8 +47,31 @@ _registry.register(
         supports_streaming=True,
         estimated_cost=0.002,
         avg_latency_ms=3000,
-    )
-)
+        tags=["text", "chat"],
+    ),
+    AgentMetadata(
+        safe_name="flux_pro",
+        description="Generate images with FLUX 1.1 Pro by Black Forest Labs.",
+        model="black-forest-labs/flux-1.1-pro",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Text description of the image to generate.",
+                },
+            },
+            "required": ["prompt"],
+        },
+        supports_streaming=False,
+        estimated_cost=0.04,
+        avg_latency_ms=8000,
+        tags=["image", "generation"],
+    ),
+]
+
+for _agent in _DEFAULT_AGENTS:
+    _registry.register(_agent)
 
 
 def _build_server() -> Any:
@@ -61,15 +86,14 @@ def _build_server() -> Any:
 
     mcp = FastMCP(
         "Replicate Agent Server",
-        version="0.1.0",
+        version=__version__,
     )
 
     # --- dynamically register every agent as an MCP tool ----------------
 
-    for agent in _registry.get_available_models():
+    for _name, meta in _registry.list_agents().items():
 
-        # Capture *agent* in the closure via a default argument.
-        def _make_handler(meta: AgentMetadata):  # noqa: ANN202
+        def _make_handler(agent_meta: AgentMetadata):  # noqa: ANN202
             async def _handler(**kwargs: Any) -> str:  # type: ignore[override]
                 token = os.environ.get("REPLICATE_API_TOKEN", "")
                 if not token:
@@ -78,17 +102,36 @@ def _build_server() -> Any:
                     )
 
                 results: list[dict[str, Any]] = []
-                async for chunk in _executor.run(meta.safe_name, kwargs):
+                async for chunk in _executor.run(agent_meta.safe_name, kwargs):
                     results.append(chunk)
 
                 return json.dumps(results, indent=2)
 
-            _handler.__name__ = meta.safe_name
-            _handler.__doc__ = meta.description
+            _handler.__name__ = agent_meta.safe_name
+            _handler.__doc__ = agent_meta.description
             return _handler
 
-        handler = _make_handler(agent)
+        handler = _make_handler(meta)
         mcp.tool()(handler)
+
+    # --- expose a list-models resource ----------------------------------
+
+    @mcp.resource("models://list")
+    def _list_models() -> str:
+        """List all available Replicate agent models."""
+        agents = _registry.list_agents()
+        return json.dumps(
+            {
+                name: {
+                    "description": a.description,
+                    "model": a.replicate_model(),
+                    "streaming": a.supports_streaming,
+                    "tags": a.tags,
+                }
+                for name, a in agents.items()
+            },
+            indent=2,
+        )
 
     return mcp
 

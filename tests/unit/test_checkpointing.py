@@ -1,4 +1,4 @@
-"""Unit tests for the checkpointing module."""
+"""Unit tests for the checkpointing module (v2 — atomic writes, versioning)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ class TestCheckpointManager:
         path = ckpt.save("sess-1", state)
         assert path.exists()
         assert path.name == "sess-1.json"
-        assert json.loads(path.read_text()) == state
 
     def test_load_returns_saved_state(self, ckpt: CheckpointManager) -> None:
         state = {"step": 2, "nested": {"key": [1, 2, 3]}}
@@ -72,5 +71,50 @@ class TestCheckpointManager:
         ckpt.save("fmt", {"k": "v"})
         path = ckpt.base_path / "fmt.json"
         text = path.read_text()
-        assert "\n" in text  # multi-line
-        assert "  " in text  # indented
+        assert "\n" in text
+        assert "  " in text
+
+    # ---- v2 features ----
+
+    def test_version_tracking(self, ckpt: CheckpointManager) -> None:
+        assert ckpt.version("s") == 0
+        ckpt.save("s", {"v": 1})
+        assert ckpt.version("s") == 1
+        ckpt.save("s", {"v": 2})
+        assert ckpt.version("s") == 2
+
+    def test_list_sessions(self, ckpt: CheckpointManager) -> None:
+        assert ckpt.list_sessions() == []
+        ckpt.save("beta", {})
+        ckpt.save("alpha", {})
+        assert ckpt.list_sessions() == ["alpha", "beta"]
+
+    def test_delete(self, ckpt: CheckpointManager) -> None:
+        ckpt.save("del-me", {"x": 1})
+        assert ckpt.exists("del-me")
+        ckpt.delete("del-me")
+        assert not ckpt.exists("del-me")
+
+    def test_delete_missing_raises(self, ckpt: CheckpointManager) -> None:
+        with pytest.raises(FileNotFoundError):
+            ckpt.delete("nonexistent")
+
+    def test_exists(self, ckpt: CheckpointManager) -> None:
+        assert not ckpt.exists("x")
+        ckpt.save("x", {})
+        assert ckpt.exists("x")
+
+    def test_atomic_write_envelope(self, ckpt: CheckpointManager) -> None:
+        """Verify the saved file has the envelope format."""
+        ckpt.save("env", {"k": "v"})
+        raw = json.loads((ckpt.base_path / "env.json").read_text())
+        assert "_meta" in raw
+        assert raw["_meta"]["session_id"] == "env"
+        assert raw["_meta"]["version"] == 1
+        assert "saved_at" in raw["_meta"]
+        assert raw["state"] == {"k": "v"}
+
+    def test_no_temp_files_left_on_success(self, ckpt: CheckpointManager) -> None:
+        ckpt.save("clean", {"ok": True})
+        tmp_files = list(ckpt.base_path.glob(".*"))
+        assert len(tmp_files) == 0
