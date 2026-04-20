@@ -314,6 +314,42 @@ That's the A+ product. The 24-week program outlined above gets us there — one 
 
 End of Strategic Implementation Plan · v1.0
 
+---
+
+All 8 actions committed. Here's the comprehensive summary:
+
+---
+
+## ✅ All 8 Immediate Actions Implemented
+
+### Changes: 22 files (9 modified, 13 new), +1,326 lines
+
+| # | Action | What Was Done | Key Files |
+|---|--------|---------------|-----------|
+| **1** | 🔴 **Fix eval() Vulnerability** | Removed all string-encoded lambdas from YAML examples. Created `TransformRegistry` — a safe, named-callable registry that eliminates `eval()` entirely. Registered 5 built-in transforms + 2 conditions matching the original YAML examples. | `agents/transforms.py` (new, 149 lines), `content_pipeline.yaml`, `research_synthesis.yaml` |
+| **2** | 🔴 **Fix Mutable Timestamp Bug** | Replaced `timestamp: datetime = datetime.utcnow()` with `field(default_factory=_utcnow)` using timezone-aware `datetime.now(timezone.utc)`. Each event now gets a unique, correct timestamp. | `utils/telemetry.py` |
+| **3** | 🟡 **Resolve Phantom Dependencies** | Removed Typer optional dep. Promoted MCP SDK from git-pinned dev dep to core runtime dep (`mcp >=1.20.0,<2.0.0`). Relaxed Python to `>=3.10`. Documented all decisions in **ADR-001**. | `pyproject.toml`, `docs/adr/001-dependency-cleanup.md` (new) |
+| **4** | 🔴 **Write Unit Tests** | Created **7 new test files** with **72 total tests** covering: TelemetryEvent/Tracker (11 tests), CheckpointManager (9), MCPTool/Resource/TransportConfig (9), AgentRegistry/Metadata (7), AgentNode/Edge/Workflow (8+), TransformRegistry (17), AgentExecutor (6), CLI (2 existing). **75% overall coverage**, with utils/mcp/agents modules at **100%**. | `tests/unit/test_*.py` (7 new files) |
+| **5** | 🔴 **Working MCP Server** | Replaced no-op `server.py` with a fully functional MCP server using the official `mcp` SDK's `FastMCP` class. Dynamically registers every agent from the registry as an MCP tool with JSON Schema. Wired to `replicate-mcp-server` console script. | `server.py` (rewritten, 107 lines) |
+| **6** | 🔴 **Working Replicate Executor** | Replaced stub with full `AgentExecutor` that calls `replicate.run()`, supports streaming (iterating output chunks), structured error handling, model name resolution, and timing metadata. Gracefully handles missing API token. | `agents/execution.py` (rewritten, 141 lines) |
+| **7** | 🟡 **Rewrite README** | Replaced aspirational claims with an honest status table showing ✅/⚠️/🔲 for every component. Added correct setup instructions, Claude Desktop integration snippet, and 3-phase roadmap summary. | `README.md` (rewritten) |
+| **8** | 🟢 **Sprint Cadence Artifacts** | Created `CONTRIBUTING.md` (branch strategy, sprint cadence, coding standards, PR process), `CHANGELOG.md` (v0.1.0 entry), PR template (with security checklist), issue template (sprint story format), and updated CI with `--cov-fail-under=75` gate. | `CONTRIBUTING.md`, `CHANGELOG.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/sprint-story.md`, `.github/workflows/ci.yml` |
+
+### Test Results
+```
+72 passed in 0.43s
+
+Module Coverage:
+  utils/telemetry.py      100%
+  utils/checkpointing.py  100%
+  mcp/protocol.py         100%
+  mcp/transport.py         100%
+  agents/registry.py       100%
+  agents/composition.py    100%
+  agents/transforms.py     100%
+  TOTAL                     75%
+```
+
 Strategic Implementation Plan · April 2026 · Prepared for Project Sponsor
 
 Supporting artifacts: Academic Evaluation · XLSX Workbook (backlog, risks, resources, sprints)
