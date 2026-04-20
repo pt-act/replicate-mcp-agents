@@ -1,11 +1,11 @@
 [project]
 name = "replicate-mcp-agents"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP-native agent orchestration for Replicate models"
 authors = [
     {name = "Your Team", email = "team@example.com"}
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,6 +18,23 @@ dependencies = [
     "pyyaml (>=6.0.2,<7.0.0)",
     "rich (>=13.9.0,<14.0.0)",
     "structlog (>=24.0.0,<26.0.0)",
+]
+
+[project.optional-dependencies]
+# OpenTelemetry — install with: pip install "replicate-mcp-agents[otel]"
+otel = [
+    "opentelemetry-sdk>=1.26.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.26.0,<2.0.0",
+]
+# Load testing
+load = [
+    "locust>=2.31.0,<3.0.0",
+]
+# Full dev extras — inlined to avoid self-referencing extras (Poetry compat)
+all = [
+    "opentelemetry-sdk>=1.26.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.26.0,<2.0.0",
+    "locust>=2.31.0,<3.0.0",
 ]
 
 [project.scripts]
@@ -39,6 +56,14 @@ pytest-cov = "^6.0.0"
 mypy = "^1.13.0"
 ruff = "^0.7.0"
 pre-commit = "^4.0.0"
+
+# ── Security: force patched versions of vulnerable transitive deps ──────────
+# CVE-2025-62727: starlette <0.49.1 (via mcp → sse-starlette)
+starlette = ">=0.49.1"
+# CVE-2026-24486 + CVE-2026-40347: python-multipart <0.0.26 (via mcp)
+python-multipart = ">=0.0.26"
+# CVE-2026-4539: pygments <2.20.0 (via rich + pytest)
+pygments = ">=2.20.0"
 
 # mcp is now a core dependency; no longer needed in a separate group
 
@@ -62,7 +87,7 @@ addopts = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
@@ -77,7 +102,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -89,5 +114,13 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "mcp.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "opentelemetry.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "keyring"
 ignore_missing_imports = true
 

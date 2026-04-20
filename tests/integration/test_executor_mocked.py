@@ -38,9 +38,9 @@ class TestExecutorMockedStreaming:
     @pytest.mark.asyncio()
     async def test_streaming_text_model(self) -> None:
         """Verify that iterable output is treated as streaming."""
-        mock_run = _install_fake_replicate(run_return=iter(["Hello", " ", "world", "!"]))
+        _install_fake_replicate(run_return=iter(["Hello", " ", "world", "!"]))
         try:
-            executor = AgentExecutor(api_token="test-token")
+            executor = AgentExecutor(api_token="test-token")  # noqa: S106
             chunks = [c async for c in executor.run("llama3_chat", {"prompt": "hi"})]
         finally:
             sys.modules.pop("replicate", None)
@@ -59,7 +59,7 @@ class TestExecutorMockedStreaming:
         """Verify string output is yielded as a single chunk."""
         _install_fake_replicate(run_return="direct result")
         try:
-            executor = AgentExecutor(api_token="test-token")
+            executor = AgentExecutor(api_token="test-token")  # noqa: S106
             chunks = [c async for c in executor.run("llama3_chat", {"prompt": "hi"})]
         finally:
             sys.modules.pop("replicate", None)
@@ -85,7 +85,7 @@ class TestExecutorMockedErrors:
         _install_fake_replicate(run_side_effect=_always_fail)
         try:
             executor = AgentExecutor(
-                api_token="test-token",
+                api_token="test-token",  # noqa: S106
                 max_retries=2,
                 retry_base=0.001,  # tiny delay for test speed
             )
@@ -104,7 +104,7 @@ class TestExecutorMockedErrors:
         """Full model IDs (with /) should be used as-is."""
         mock_run = _install_fake_replicate(run_return="ok")
         try:
-            executor = AgentExecutor(api_token="test-token")
+            executor = AgentExecutor(api_token="test-token")  # noqa: S106
             chunks = [
                 c async for c in executor.run("custom/model-v2", {"prompt": "test"})
             ]

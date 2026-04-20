@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from replicate_mcp.utils.logging import configure_logging, get_logger, HAS_STRUCTLOG
+from replicate_mcp.utils.logging import HAS_STRUCTLOG, configure_logging, get_logger
 
 
 class TestConfigureLogging:
