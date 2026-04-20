@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestServerModuleSingletons:
     """Test the module-level objects without invoking the MCP server."""
@@ -16,14 +14,14 @@ class TestServerModuleSingletons:
         assert "flux_pro" in agents
 
     def test_executor_created(self) -> None:
-        from replicate_mcp.server import _executor
         from replicate_mcp.agents.execution import AgentExecutor
+        from replicate_mcp.server import _executor
 
         assert isinstance(_executor, AgentExecutor)
 
     def test_router_created(self) -> None:
-        from replicate_mcp.server import _router
         from replicate_mcp.routing import CostAwareRouter
+        from replicate_mcp.server import _router
 
         assert isinstance(_router, CostAwareRouter)
 

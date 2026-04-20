@@ -24,7 +24,6 @@ from replicate_mcp.exceptions import (
     WorkflowValidationError,
 )
 
-
 # -----------------------------------------------------------------------
 # AgentNode
 # -----------------------------------------------------------------------
@@ -157,7 +156,7 @@ class TestTopologicalSort:
         """A -> B -> D, A -> C -> D, C -> E"""
         adj = {"a": ["b", "c"], "b": ["d"], "c": ["d", "e"]}
         levels = topological_sort({"a", "b", "c", "d", "e"}, adj)
-        flat = [n for l in levels for n in l]
+        flat = [n for level in levels for n in level]
         # Verify ordering constraints
         assert flat.index("a") < flat.index("b")
         assert flat.index("a") < flat.index("c")

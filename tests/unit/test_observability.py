@@ -5,12 +5,10 @@ from __future__ import annotations
 import pytest
 
 from replicate_mcp.observability import (
-    HAS_OTEL,
     Observability,
     ObservabilityConfig,
     default_observability,
 )
-
 
 # ---------------------------------------------------------------------------
 # ObservabilityConfig
@@ -145,8 +143,8 @@ class TestObservabilityIntegration:
 
     @pytest.mark.asyncio
     async def test_executor_records_circuit_trip(self) -> None:
-        from replicate_mcp.resilience import CircuitBreaker, CircuitBreakerConfig
         from replicate_mcp.agents.execution import AgentExecutor
+        from replicate_mcp.resilience import CircuitBreakerConfig
 
         obs = Observability()
         # Trip the circuit immediately

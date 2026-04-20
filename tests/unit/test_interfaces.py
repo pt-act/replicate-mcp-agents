@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from collections.abc import AsyncIterator
-
-import pytest
 
 from replicate_mcp.interfaces import (
     AgentExecutorProtocol,
@@ -18,7 +16,6 @@ from replicate_mcp.interfaces import (
     RateLimiterProtocol,
     TelemetryTrackerProtocol,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal concrete implementations for runtime_checkable checks
@@ -43,7 +40,7 @@ class _FakeRegistry:
 
 class _FakeCheckpoint:
     def save(self, session_id: str, state: dict) -> Path:
-        return Path("/tmp/ckpt")
+        return Path("/tmp/ckpt")  # noqa: S108
     def load(self, session_id: str) -> dict: return {}
     def exists(self, session_id: str) -> bool: return False
     def delete(self, session_id: str) -> None: ...
@@ -136,8 +133,9 @@ class TestConcreteImplementationsConform:
         assert isinstance(CostAwareRouter(), ModelRouterProtocol)
 
     def test_checkpoint_manager_conforms(self) -> None:
-        from replicate_mcp.utils.checkpointing import CheckpointManager
         import tempfile
+
+        from replicate_mcp.utils.checkpointing import CheckpointManager
         with tempfile.TemporaryDirectory() as d:
             assert isinstance(CheckpointManager(Path(d)), CheckpointManagerProtocol)
 

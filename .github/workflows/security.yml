@@ -25,16 +25,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          virtualenvs-create: false
-      - name: Install dependencies
-        run: poetry install --with dev --without docs
-      - name: Run pip-audit
+      - name: Install Poetry + pip-audit
+        run: pip install poetry pip-audit poetry-plugin-export
+      - name: Export requirements
+        # Audit only declared project deps (not the local editable package itself,
+        # not runner-global tools like uv/wheel which aren't our deps).
         run: |
-          pip install pip-audit
-          pip-audit --strict --desc
+          poetry export --without-hashes -f requirements.txt \
+            --without docs \
+            -o /tmp/audit-requirements.txt
+      - name: Run pip-audit
+        run: pip-audit -r /tmp/audit-requirements.txt --desc
 
   # ---------------------------------------------------------------------------
   # SAST — Bandit static analysis for Python security issues
@@ -132,16 +133,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Poetry + cyclonedx-bom
-        run: |
-          pip install poetry cyclonedx-bom
+      - name: Install Poetry + cyclonedx-py
+        run: pip install poetry cyclonedx-bom poetry-plugin-export
       - name: Generate SBOM (CycloneDX JSON)
         run: |
-          pip install poetry-plugin-export
-          poetry export --without-hashes -f requirements.txt -o /tmp/requirements.txt
+          poetry export --without-hashes --without docs \
+            -f requirements.txt -o /tmp/requirements.txt
           cyclonedx-py requirements /tmp/requirements.txt \
-            --output-format json \
-            --output-file sbom.json
+            --of JSON \
+            -o sbom.json
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:

@@ -9,7 +9,6 @@ import pytest
 
 from replicate_mcp.ratelimit import RateLimiter, TokenBucket
 
-
 # ---------------------------------------------------------------------------
 # TokenBucket
 # ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from replicate_mcp.dsl import (
-    CompiledTransform,
     ExpressionSyntaxError,
     SafeEvaluator,
     UnsafeExpressionError,

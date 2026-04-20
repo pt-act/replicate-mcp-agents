@@ -5,14 +5,13 @@ from __future__ import annotations
 import pytest
 
 from replicate_mcp.agents.execution import (
-    AgentExecutor,
     DEFAULT_MODEL_MAP,
+    AgentExecutor,
     ModelCatalogue,
     ModelInfo,
 )
 from replicate_mcp.exceptions import ModelNotFoundError
 from replicate_mcp.resilience import RetryConfig, compute_retry_delay
-
 
 # -----------------------------------------------------------------------
 # ModelInfo

@@ -76,7 +76,7 @@ def _bench_validator() -> None:
     """Benchmark Pydantic AgentInputModel validation."""
     from replicate_mcp.validation import AgentInputModel
 
-    payload = random.choice(_SAMPLE_PAYLOADS)
+    payload = random.choice(_SAMPLE_PAYLOADS)  # noqa: S311
     model = AgentInputModel(agent_id="llama3_chat", payload=payload)
     assert model.agent_id == "llama3_chat"
 
@@ -87,7 +87,7 @@ def _bench_router() -> None:
 
     router = CostAwareRouter(strategy="thompson")
     for model in _CANDIDATES:
-        router.register_model(model, initial_cost=random.uniform(0.001, 0.05))
+        router.register_model(model, initial_cost=random.uniform(0.001, 0.05))  # noqa: S311
     chosen = router.select_model(_CANDIDATES)
     assert chosen in _CANDIDATES
 
@@ -97,7 +97,7 @@ def _bench_dsl() -> None:
     from replicate_mcp.dsl import SafeEvaluator
 
     ev = SafeEvaluator()
-    score = random.random()
+    score = random.random()  # noqa: S311
     result = ev.evaluate("score > 0.5", {"score": score})
     assert isinstance(result, bool)
 
@@ -160,9 +160,9 @@ class AgentValidationUser(HttpUser):
 
         start = time.perf_counter()
         try:
-            model = WorkflowInputModel(
+            _model = WorkflowInputModel(
                 workflow_name="bench-workflow",
-                initial_input=random.choice(_SAMPLE_PAYLOADS),
+                initial_input=random.choice(_SAMPLE_PAYLOADS),  # noqa: S311
             )
             elapsed_ms = (time.perf_counter() - start) * 1000
             events.request.fire(

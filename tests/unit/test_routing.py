@@ -6,7 +6,6 @@ import pytest
 
 from replicate_mcp.routing import CostAwareRouter, ModelStats, RoutingWeights
 
-
 # ---------------------------------------------------------------------------
 # ModelStats
 # ---------------------------------------------------------------------------

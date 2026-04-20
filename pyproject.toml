@@ -5,7 +5,7 @@ description = "MCP-native agent orchestration for Replicate models"
 authors = [
     {name = "Your Team", email = "team@example.com"}
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,10 +30,11 @@ otel = [
 load = [
     "locust>=2.31.0,<3.0.0",
 ]
-# Full dev extras
+# Full dev extras — inlined to avoid self-referencing extras (Poetry compat)
 all = [
-    "replicate-mcp-agents[otel]",
-    "replicate-mcp-agents[load]",
+    "opentelemetry-sdk>=1.26.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.26.0,<2.0.0",
+    "locust>=2.31.0,<3.0.0",
 ]
 
 [project.scripts]
@@ -55,6 +56,14 @@ pytest-cov = "^6.0.0"
 mypy = "^1.13.0"
 ruff = "^0.7.0"
 pre-commit = "^4.0.0"
+
+# ── Security: force patched versions of vulnerable transitive deps ──────────
+# CVE-2025-62727: starlette <0.49.1 (via mcp → sse-starlette)
+starlette = ">=0.49.1"
+# CVE-2026-24486 + CVE-2026-40347: python-multipart <0.0.26 (via mcp)
+python-multipart = ">=0.0.26"
+# CVE-2026-4539: pygments <2.20.0 (via rich + pytest)
+pygments = ">=2.20.0"
 
 # mcp is now a core dependency; no longer needed in a separate group
 

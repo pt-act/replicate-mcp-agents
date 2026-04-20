@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
@@ -18,7 +17,6 @@ from replicate_mcp.resilience import (
     retry_iter,
     with_retry,
 )
-
 
 # ---------------------------------------------------------------------------
 # CircuitBreaker — state transitions

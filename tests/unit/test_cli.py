@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
-from replicate_mcp.cli.main import app, _load_payload
-
+from replicate_mcp.cli.main import _load_payload, app
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
 
-def _run(*args: str, env: dict | None = None, input: str | None = None) -> "Result":
+def _run(*args: str, env: dict | None = None, input: str | None = None) -> Result:
     runner = CliRunner()
     return runner.invoke(app, list(args), env=env or {}, input=input, catch_exceptions=False)
 

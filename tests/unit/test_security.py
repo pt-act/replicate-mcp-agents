@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from replicate_mcp.security import (
     InsecureConfigError,
-    SecretMasker,
     SecretManager,
+    SecretMasker,
     SecretNotFoundError,
     assert_no_eval_in_config,
     sanitize_otel_attributes,
 )
-
 
 # ---------------------------------------------------------------------------
 # SecretMasker
@@ -52,9 +49,9 @@ class TestSecretMasker:
 
     def test_sanitize_nested_dict(self) -> None:
         masker = SecretMasker()
-        data = {"outer": {"password": "supersecret123456"}}
+        data = {"outer": {"password": "supersecret123456"}}  # pragma: allowlist secret
         result = masker.sanitize(data)
-        assert result["outer"]["password"] != "supersecret123456"
+        assert result["outer"]["password"] != "supersecret123456"  # noqa: S105  # pragma: allowlist secret
 
     def test_sanitize_list(self) -> None:
         masker = SecretMasker()
@@ -71,7 +68,7 @@ class TestSecretMasker:
         masker = SecretMasker()
         data = {"token": 12345}
         result = masker.sanitize(data)
-        assert result["token"] == "***"
+        assert result["token"] == "***"  # noqa: S105
 
     def test_extra_patterns(self) -> None:
         import re
@@ -81,9 +78,9 @@ class TestSecretMasker:
 
     def test_extra_keys(self) -> None:
         masker = SecretMasker(extra_keys={"my_custom_secret"})
-        data = {"my_custom_secret": "should-be-masked"}
+        data = {"my_custom_secret": "should-be-masked"}  # pragma: allowlist secret
         result = masker.sanitize(data)
-        assert result["my_custom_secret"] != "should-be-masked"
+        assert result["my_custom_secret"] != "should-be-masked"  # noqa: S105  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------
