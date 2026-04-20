@@ -2,10 +2,10 @@
 
 > **MCP-native agent orchestration for Replicate AI models — production-grade, observable, and extensible.**
 
-[![Tests](https://img.shields.io/badge/tests-641%20passed-brightgreen)](#test-suite)
+[![Tests](https://img.shields.io/badge/tests-764%20passed-brightgreen)](#test-suite)
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#test-suite)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Mypy](https://img.shields.io/badge/mypy-strict-green)](pyproject.toml)
 [![Ruff](https://img.shields.io/badge/lint-ruff-green)](pyproject.toml)
@@ -32,7 +32,7 @@
 
 ---
 
-## Current Status — v0.5.0
+## Current Status — v0.6.0
 
 | Subsystem | Status | Details |
 |-----------|--------|---------|
@@ -59,8 +59,15 @@
 | **Structured Logging** | ✅ Production | structlog (JSON/coloured), stdlib fallback |
 | **CLI** | ✅ Production | `serve`, `agents run/list`, `workflows run/list`, `workers start/ping` |
 
-**Test suite:** 641 tests · 90 % line coverage · 34 fully-typed source files · ~7 500 source lines
+| **Router State Persistence** | ✅ Production | `RouterStateManager`; atomic JSON snapshot; `auto_save()` background loop |
+| **Mutable Plugin Middleware** | ✅ Production | `on_agent_run` / `on_agent_result` hooks are now transformative; wired into `AgentExecutor` |
+| **YAML Workflow Config** | ✅ Production | `load_workflows_file()`; `serve --workflows-file`; full step / condition / input_map support |
+| **Invocation Audit Log** | ✅ Production | `AuditLogger`; `~/.replicate/audit.jsonl`; `audit tail/costs/stats/clear` CLI |
+| **Content-Addressed Cache** | ✅ Production | `ResultCache`; LRU + TTL; opt-in per executor; `hit_rate` introspection |
 
+**Test suite:** 764 tests · 90 % line coverage · 37 fully-typed source files · ~8 500 source lines
+
+> **Phase 5a delivered:** Persistent router state, mutable plugin middleware wired into executor, YAML workflow configuration, local audit log + cost dashboard, content-addressed result cache.  
 > **Phase 4 fixed:** `asyncio.get_event_loop()` → `asyncio.get_running_loop()` in `TaskHandle`; `CircuitBreaker.state` is now a pure getter; `AdaptiveRouter` no longer accesses `_stats` directly; `ModelCatalogue` delegated to `ModelDiscovery`.
 
 ---
@@ -716,7 +723,15 @@ async for event in wf.execute({"text": "Draft policy document"}):
 | **2** | S5–S8 | Hardening: protocols, security, resilience, routing, OTEL | ✅ Complete |
 | **3** | S9–S12 | Differentiation: discovery, SDK, QoS, plugins, distributed | ✅ Complete |
 | **4** | S13–S16 | Scale: code defect fixes, HTTP transport, remote workers, full CLI | ✅ Complete |
-| **5** | S17–S20 | Production: gRPC workers, multi-tenant auth, Grafana dashboard | 🔲 Planned |
+| **5a** | S17–S18 | Developer-First: persistent router state, mutable middleware, YAML workflows, audit log, result cache | ✅ Complete |
+| **5b** | S19–S20 | Enterprise: gRPC workers, multi-tenant auth, Grafana/Prometheus dashboard | 🔲 Planned |
+
+**Phase 5a delivered:**
+1. ✅ `RouterStateManager` — router learning persists across restarts; atomic JSON snapshot + `auto_save()` background loop
+2. ✅ Mutable plugin middleware — `on_agent_run` / `on_agent_result` hooks can transform payloads/chunks; wired into `AgentExecutor`
+3. ✅ `load_workflows_file()` — declarative YAML workflow definitions; `serve --workflows-file`
+4. ✅ `AuditLogger` — local `~/.replicate/audit.jsonl` + `replicate-agent audit tail/costs/stats/clear`
+5. ✅ `ResultCache` — content-addressed LRU cache; eliminates redundant API calls during development
 
 **Phase 4 delivered:**
 1. ✅ `asyncio.get_running_loop()` in `TaskHandle` (was `get_event_loop()`)

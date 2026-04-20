@@ -48,12 +48,16 @@ Usage::
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
 from replicate_mcp.exceptions import ReplicateMCPError
+
+logger = logging.getLogger(__name__)
 
 # Module-level default registry used by the @agent decorator.
 _default_registry: AgentRegistry = AgentRegistry()
@@ -78,6 +82,14 @@ def reset_default_registry() -> None:
     """
     global _default_registry  # noqa: PLW0603
     _default_registry = AgentRegistry()
+
+
+def reset_workflow_registry() -> None:
+    """Clear the module-level workflow registry.
+
+    Primarily useful in tests where each test case needs a clean slate.
+    """
+    _workflow_registry.clear()
 
 
 def register_workflow(spec: WorkflowSpec) -> WorkflowSpec:
@@ -115,6 +127,115 @@ def get_workflow(name: str) -> WorkflowSpec | None:
 def list_workflows() -> dict[str, WorkflowSpec]:
     """Return a snapshot of the module-level workflow registry."""
     return dict(_workflow_registry)
+
+
+def load_workflows_file(path: str | Path) -> int:
+    """Parse a YAML workflow definition file and register all workflows.
+
+    The file must contain a top-level ``workflows`` key with a list of
+    workflow definitions.  Each definition maps directly to the
+    :class:`WorkflowBuilder` API:
+
+    .. code-block:: yaml
+
+        workflows:
+          - name: research-pipeline
+            description: "Research, summarise, and classify"
+            steps:
+              - agent: web_searcher
+                input_map: {query: user_query}
+              - agent: summariser
+                input_map: {text: output}
+              - agent: classifier
+                condition: "len(output) > 100"
+                input_map: {label: output}
+
+    Each *step* has:
+    - ``agent`` (required) — the ``safe_name`` of the registered agent.
+    - ``input_map`` (optional) — ``dict[str, str]`` mapping this step's
+      input keys to keys from the previous step's output (or the initial
+      workflow input).
+    - ``condition`` (optional) — a :mod:`replicate_mcp.dsl`-compatible
+      expression; the step is skipped when it evaluates to ``False``.
+
+    Args:
+        path: Path to the YAML file.
+
+    Returns:
+        Number of workflows successfully loaded and registered.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        ValueError: If the YAML structure is invalid.
+    """
+    import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Workflow file not found: {path}")
+
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Could not parse YAML workflow file {path}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Workflow file {path} must contain a YAML mapping at the top level"
+        )
+
+    workflow_defs = raw.get("workflows", [])
+    if not isinstance(workflow_defs, list):
+        raise ValueError(
+            f"'workflows' key in {path} must be a list, got {type(workflow_defs).__name__}"
+        )
+
+    loaded = 0
+    for idx, wf_def in enumerate(workflow_defs):
+        if not isinstance(wf_def, dict):
+            logger.warning("Skipping workflow at index %d — not a dict", idx)
+            continue
+
+        name = wf_def.get("name", "").strip()
+        if not name:
+            logger.warning(
+                "Skipping workflow at index %d — missing or empty 'name'", idx
+            )
+            continue
+
+        description = str(wf_def.get("description", ""))
+        steps_raw = wf_def.get("steps", [])
+
+        if not isinstance(steps_raw, list) or not steps_raw:
+            logger.warning(
+                "Skipping workflow %r — 'steps' must be a non-empty list", name
+            )
+            continue
+
+        try:
+            builder = WorkflowBuilder(name).description(description)
+            for step in steps_raw:
+                if not isinstance(step, dict):
+                    raise ValueError(f"Step must be a dict, got {type(step).__name__}")
+                agent_name = step.get("agent", "").strip()
+                if not agent_name:
+                    raise ValueError("Each step must have a non-empty 'agent' key")
+                input_map: dict[str, str] = step.get("input_map") or {}
+                condition: str | None = step.get("condition") or None
+                builder.then(
+                    agent_name,
+                    input_map={str(k): str(v) for k, v in input_map.items()},
+                    condition=condition,
+                )
+            spec = builder.build()
+            register_workflow(spec)
+            loaded += 1
+            logger.debug("Loaded workflow %r from %s", name, path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to load workflow %r from %s: %s", name, path, exc)
+
+    logger.info("Loaded %d workflow(s) from %s", loaded, path)
+    return loaded
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +583,10 @@ __all__ = [
     "get_default_registry",
     "reset_default_registry",
     "register_workflow",
+    "reset_workflow_registry",
     "get_workflow",
     "list_workflows",
+    "load_workflows_file",
     "AgentBuilder",
     "WorkflowBuilder",
     "WorkflowSpec",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
@@ -14,6 +16,9 @@ from replicate_mcp.sdk import (
     WorkflowStep,
     agent,
     get_default_registry,
+    get_workflow,
+    list_workflows,
+    load_workflows_file,
     reset_default_registry,
 )
 
@@ -371,12 +376,11 @@ class TestWorkflowRegistry:
         assert get_workflow("nonexistent") is None
 
     def test_list_workflows_empty(self) -> None:
-        from replicate_mcp.sdk import list_workflows  # noqa: PLC0415
 
         assert list_workflows() == {}
 
     def test_list_workflows_returns_snapshot(self) -> None:
-        from replicate_mcp.sdk import list_workflows, register_workflow  # noqa: PLC0415
+        from replicate_mcp.sdk import register_workflow  # noqa: PLC0415
 
         spec_a = self._make_spec("wf-a")
         spec_b = self._make_spec("wf-b")
@@ -388,7 +392,6 @@ class TestWorkflowRegistry:
 
     def test_list_workflows_is_copy(self) -> None:
         """Mutations to the returned dict must not affect the registry."""
-        from replicate_mcp.sdk import list_workflows  # noqa: PLC0415
 
         snap = list_workflows()
         snap["injected"] = self._make_spec("injected")
@@ -402,3 +405,154 @@ class TestWorkflowRegistry:
         register_workflow(spec1)
         register_workflow(spec2)
         assert get_workflow("dupe") is spec2
+
+
+# ---------------------------------------------------------------------------
+# load_workflows_file
+# ---------------------------------------------------------------------------
+
+
+class TestLoadWorkflowsFile:
+    """Tests for declarative YAML workflow loading."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_workflow_registry(self) -> None:
+        from replicate_mcp.sdk import reset_workflow_registry  # noqa: PLC0415
+
+        reset_workflow_registry()
+        yield
+        reset_workflow_registry()
+
+    def _write_yaml(self, tmp_path: Path, content: str) -> Path:
+        path = tmp_path / "workflows.yaml"
+        path.write_text(content)
+        return path
+
+    def test_loads_single_workflow(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - name: my-pipeline
+    description: "Test pipeline"
+    steps:
+      - agent: summariser
+      - agent: classifier
+""",
+        )
+        count = load_workflows_file(path)
+        assert count == 1
+        spec = get_workflow("my-pipeline")
+        assert spec is not None
+        assert spec.name == "my-pipeline"
+        assert spec.step_count == 2
+        assert spec.agent_names == ["summariser", "classifier"]
+
+    def test_loads_multiple_workflows(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - name: wf-a
+    steps:
+      - agent: agent_a
+  - name: wf-b
+    steps:
+      - agent: agent_b
+""",
+        )
+        count = load_workflows_file(path)
+        assert count == 2
+        assert get_workflow("wf-a") is not None
+        assert get_workflow("wf-b") is not None
+
+    def test_loads_step_with_input_map(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - name: pipe
+    steps:
+      - agent: searcher
+        input_map:
+          query: user_input
+      - agent: summariser
+        input_map:
+          text: output
+""",
+        )
+        load_workflows_file(path)
+        spec = get_workflow("pipe")
+        assert spec is not None
+        assert spec.steps[0].input_map == {"query": "user_input"}
+        assert spec.steps[1].input_map == {"text": "output"}
+
+    def test_loads_step_with_condition(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - name: conditional
+    steps:
+      - agent: classifier
+        condition: "score > 0.7"
+""",
+        )
+        load_workflows_file(path)
+        spec = get_workflow("conditional")
+        assert spec is not None
+        assert spec.steps[0].condition == "score > 0.7"
+
+    def test_raises_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_workflows_file(tmp_path / "nonexistent.yaml")
+
+    def test_raises_on_invalid_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.yaml"
+        path.write_text("{this is: [invalid yaml}")
+        with pytest.raises(ValueError, match="Could not parse"):
+            load_workflows_file(path)
+
+    def test_raises_on_non_mapping_root(self, tmp_path: Path) -> None:
+        path = self._write_yaml(tmp_path, "- just a list")
+        with pytest.raises(ValueError, match="must contain a YAML mapping"):
+            load_workflows_file(path)
+
+    def test_skips_workflow_with_no_name(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - description: "No name here"
+    steps:
+      - agent: a
+  - name: valid
+    steps:
+      - agent: b
+""",
+        )
+        count = load_workflows_file(path)
+        assert count == 1
+        assert get_workflow("valid") is not None
+
+    def test_skips_workflow_with_empty_steps(self, tmp_path: Path) -> None:
+        path = self._write_yaml(
+            tmp_path,
+            """
+workflows:
+  - name: empty-steps
+    steps: []
+""",
+        )
+        count = load_workflows_file(path)
+        assert count == 0
+
+    def test_empty_workflows_list(self, tmp_path: Path) -> None:
+        path = self._write_yaml(tmp_path, "workflows: []")
+        count = load_workflows_file(path)
+        assert count == 0
+
+    def test_missing_workflows_key_loads_zero(self, tmp_path: Path) -> None:
+        path = self._write_yaml(tmp_path, "other_key: value")
+        count = load_workflows_file(path)
+        assert count == 0

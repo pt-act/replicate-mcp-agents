@@ -69,12 +69,20 @@ def app() -> None:
 @click.option("--port", default=8080, show_default=True, type=int, help="TCP port (HTTP transports).")
 @click.option("--mount-path", default=None, help="URL prefix for SSE transport.")
 @click.option("--log-level", default="info", show_default=True, help="Uvicorn log level.")
+@click.option(
+    "--workflows-file",
+    "workflows_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to a YAML workflow definition file to load at startup.",
+)
 def serve(
     transport: str,
     host: str,
     port: int,
     mount_path: str | None,
     log_level: str,
+    workflows_file: str | None,
 ) -> None:
     """Launch the MCP server with the specified transport.
 
@@ -90,14 +98,27 @@ def serve(
       # Local stdio (Claude Desktop)
       replicate-agent serve
 
-      # Cloud-hosted SSE on port 8080
-      replicate-agent serve --transport sse --port 8080
+      # Load workflows from file and serve via SSE
+      replicate-agent serve --transport sse --workflows-file workflows.yaml
 
       # Streamable HTTP (MCP 1.x)
       replicate-agent serve --transport streamable-http --host 0.0.0.0 --port 9090
     """
     from replicate_mcp.server import serve as _serve_stdio  # noqa: PLC0415
     from replicate_mcp.server import serve_http, serve_streamable_http  # noqa: PLC0415
+
+    # Load declarative workflow definitions before starting the server
+    if workflows_file:
+        from replicate_mcp.sdk import load_workflows_file  # noqa: PLC0415
+
+        try:
+            count = load_workflows_file(workflows_file)
+            console.print(
+                f"✓ Loaded [bold]{count}[/bold] workflow(s) from "
+                f"[cyan]{workflows_file}[/cyan]"
+            )
+        except Exception as exc:  # noqa: BLE001
+            err_console.print(f"✗ Failed to load workflows file: {exc}")
 
     token = _secret_manager.get_token(required=False)
     if not token:
@@ -620,6 +641,213 @@ def ping_worker(url: str) -> None:
             sys.exit(1)
 
     asyncio.run(_ping())
+
+
+# ---------------------------------------------------------------------------
+# audit sub-group
+# ---------------------------------------------------------------------------
+
+
+@app.group()
+def audit() -> None:
+    """Inspect the local invocation audit log and cost dashboard."""
+
+
+@audit.command("tail")
+@click.option("--n", "count", default=20, show_default=True, type=int, help="Number of records to show.")
+@click.option("--agent", "filter_agent", default=None, help="Filter by agent name.")
+def audit_tail(count: int, filter_agent: str | None) -> None:
+    """Display the most recent invocations from the audit log."""
+    from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+    log = AuditLogger()
+    if not log.exists():
+        console.print(
+            "[dim]No audit log found at[/dim] [cyan]{}[/cyan]".format(log.path)  # noqa: UP032
+        )
+        console.print("[dim]Records appear here once agents are invoked.[/dim]")
+        return
+
+    records = log.read_records()
+    if filter_agent:
+        records = [r for r in records if r.agent == filter_agent]
+
+    records = records[-count:]
+
+    table = Table(title=f"Audit Log — last {len(records)} records", show_header=True)
+    table.add_column("Timestamp", style="dim", min_width=20)
+    table.add_column("Agent", style="cyan")
+    table.add_column("Model", style="blue")
+    table.add_column("Latency", justify="right")
+    table.add_column("Cost (USD)", justify="right")
+    table.add_column("Status", justify="center")
+    table.add_column("Session", style="dim")
+
+    for rec in records:
+        status_str = "[green]✓[/green]" if rec.success else "[red]✗[/red]"
+        table.add_row(
+            rec.ts[:19].replace("T", " "),
+            rec.agent,
+            rec.model,
+            f"{rec.latency_ms:.0f} ms",
+            f"${rec.cost_usd:.4f}" if rec.cost_usd else "—",
+            status_str,
+            rec.session_id,
+        )
+
+    console.print(table)
+    console.print(
+        f"[dim]Log path: {log.path}  ({log.size_bytes():,} bytes)[/dim]"
+    )
+
+
+@audit.command("costs")
+@click.option(
+    "--period",
+    type=click.Choice(["today", "week", "month", "all"]),
+    default="today",
+    show_default=True,
+    help="Time window for cost aggregation.",
+)
+def audit_costs(period: str) -> None:
+    """Show spend breakdown by model for the specified time period."""
+    from replicate_mcp.utils.audit import (  # noqa: PLC0415
+        AuditLogger,
+        compute_cost_summary,
+        filter_by_period,
+    )
+
+    log = AuditLogger()
+    if not log.exists():
+        console.print("[dim]No audit log found — run some agents first.[/dim]")
+        return
+
+    records = filter_by_period(log.read_records(), period)
+    if not records:
+        console.print(f"[dim]No records found for period '{period}'.[/dim]")
+        return
+
+    summary = compute_cost_summary(records)
+    total_cost = sum(v["cost_usd"] for v in summary.values())
+    total_calls = sum(v["calls"] for v in summary.values())
+    total_ok = sum(v["successes"] for v in summary.values())
+
+    table = Table(
+        title=f"Cost Dashboard — {period.capitalize()}", show_header=True
+    )
+    table.add_column("Model", style="cyan", min_width=30)
+    table.add_column("Calls", justify="right")
+    table.add_column("Success", justify="right")
+    table.add_column("Cost (USD)", justify="right", style="green")
+
+    for model, stats in sorted(summary.items(), key=lambda x: -x[1]["cost_usd"]):
+        success_pct = (
+            f"{stats['successes'] / stats['calls'] * 100:.1f}%"
+            if stats["calls"] > 0
+            else "—"
+        )
+        table.add_row(
+            model,
+            str(stats["calls"]),
+            success_pct,
+            f"${stats['cost_usd']:.4f}",
+        )
+
+    # Totals row
+    overall_pct = f"{total_ok / total_calls * 100:.1f}%" if total_calls > 0 else "—"
+    table.add_section()
+    table.add_row(
+        "[bold]TOTAL[/bold]",
+        f"[bold]{total_calls}[/bold]",
+        f"[bold]{overall_pct}[/bold]",
+        f"[bold]${total_cost:.4f}[/bold]",
+    )
+
+    console.print(table)
+
+
+@audit.command("stats")
+@click.argument("agent_name", required=False)
+@click.option(
+    "--period",
+    type=click.Choice(["today", "week", "month", "all"]),
+    default="all",
+    show_default=True,
+    help="Time window for statistics.",
+)
+def audit_stats(agent_name: str | None, period: str) -> None:
+    """Show latency percentiles and success rates.
+
+    Optionally filter to a single AGENT_NAME.
+    """
+    from replicate_mcp.utils.audit import (  # noqa: PLC0415
+        AuditLogger,
+        filter_by_period,
+    )
+
+    log = AuditLogger()
+    if not log.exists():
+        console.print("[dim]No audit log found — run some agents first.[/dim]")
+        return
+
+    records = filter_by_period(log.read_records(), period)
+    if agent_name:
+        records = [r for r in records if r.agent == agent_name]
+
+    if not records:
+        console.print("[dim]No matching records.[/dim]")
+        return
+
+    # Group by agent
+    by_agent: dict[str, list[Any]] = {}
+    for rec in records:
+        by_agent.setdefault(rec.agent, []).append(rec)
+
+    table = Table(
+        title=f"Latency & Success Stats — {period.capitalize()}", show_header=True
+    )
+    table.add_column("Agent", style="cyan", min_width=20)
+    table.add_column("Calls", justify="right")
+    table.add_column("Success %", justify="right")
+    table.add_column("p50 ms", justify="right")
+    table.add_column("p95 ms", justify="right")
+    table.add_column("p99 ms", justify="right")
+    table.add_column("Avg ms", justify="right")
+
+    from replicate_mcp.utils.audit import _percentile  # noqa: PLC0415
+
+    for aname, recs in sorted(by_agent.items()):
+        calls = len(recs)
+        ok = sum(1 for r in recs if r.success)
+        latencies = sorted(r.latency_ms for r in recs)
+        table.add_row(
+            aname,
+            str(calls),
+            f"{ok / calls * 100:.1f}%",
+            f"{_percentile(latencies, 50):.0f}",
+            f"{_percentile(latencies, 95):.0f}",
+            f"{_percentile(latencies, 99):.0f}",
+            f"{sum(latencies) / len(latencies):.0f}",
+        )
+
+    console.print(table)
+
+
+@audit.command("clear")
+@click.confirmation_option(prompt="Delete the entire audit log? This cannot be undone.")
+def audit_clear() -> None:
+    """Delete the audit log file."""
+    from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+    log = AuditLogger()
+    if not log.exists():
+        console.print("[dim]Nothing to clear — audit log does not exist.[/dim]")
+        return
+    size = log.size_bytes()
+    log.clear()
+    console.print(
+        f"✓ Audit log cleared ({size:,} bytes deleted from [cyan]{log.path}[/cyan])"
+    )
 
 
 # ---------------------------------------------------------------------------
