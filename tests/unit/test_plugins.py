@@ -40,16 +40,20 @@ class _GoodPlugin(BasePlugin):
     def teardown(self) -> None:
         self.teardown_called = True
 
-    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> None:
+    def on_agent_run(
+        self, agent_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         self.runs.append(agent_name)
+        return None  # pass-through: no transformation
 
     def on_agent_result(
         self,
         agent_name: str,
         chunks: list[dict[str, Any]],
         latency_ms: float,
-    ) -> None:
+    ) -> list[dict[str, Any]] | None:
         self.results.append(agent_name)
+        return None  # pass-through: no transformation
 
     def on_error(self, agent_name: str, error: Exception) -> None:
         self.error_names.append(agent_name)
@@ -90,12 +94,14 @@ class _FailingHooksPlugin(BasePlugin):
     def teardown(self) -> None:
         pass
 
-    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> None:
+    def on_agent_run(
+        self, agent_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         raise RuntimeError("hook error")
 
     def on_agent_result(
         self, agent_name: str, chunks: list[dict[str, Any]], latency_ms: float
-    ) -> None:
+    ) -> list[dict[str, Any]] | None:
         raise RuntimeError("hook error")
 
     def on_error(self, agent_name: str, error: Exception) -> None:
@@ -391,3 +397,141 @@ class TestPluginRegistry:
     def test_repr(self) -> None:
         reg = PluginRegistry()
         assert "PluginRegistry" in repr(reg)
+
+    def test_dispatch_run_returns_original_when_no_transform(self) -> None:
+        """dispatch_run returns original payload when no plugin transforms it."""
+        reg = PluginRegistry()
+        reg.load(_GoodPlugin())
+        payload = {"prompt": "hello"}
+        result = reg.dispatch_run("agent", payload)
+        assert result == payload
+
+    def test_dispatch_result_returns_original_when_no_transform(self) -> None:
+        """dispatch_result returns original chunks when no plugin transforms them."""
+        reg = PluginRegistry()
+        reg.load(_GoodPlugin())
+        chunks = [{"done": True}]
+        result = reg.dispatch_result("agent", chunks, 100.0)
+        assert result == chunks
+
+
+# ---------------------------------------------------------------------------
+# Mutable middleware — transforming plugins
+# ---------------------------------------------------------------------------
+
+
+class _PayloadAugmentPlugin(BasePlugin):
+    """Plugin that injects a 'system' key into every payload."""
+
+    @property
+    def metadata(self) -> PluginMetadata:
+        return PluginMetadata(name="payload_augment")
+
+    def setup(self) -> None:
+        pass
+
+    def teardown(self) -> None:
+        pass
+
+    def on_agent_run(
+        self, agent_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return {**payload, "system": "You are a helpful assistant."}
+
+
+class _ChunkFilterPlugin(BasePlugin):
+    """Plugin that removes chunks with 'done: False' from results."""
+
+    @property
+    def metadata(self) -> PluginMetadata:
+        return PluginMetadata(name="chunk_filter")
+
+    def setup(self) -> None:
+        pass
+
+    def teardown(self) -> None:
+        pass
+
+    def on_agent_result(
+        self, agent_name: str, chunks: list[dict[str, Any]], latency_ms: float
+    ) -> list[dict[str, Any]] | None:
+        return [c for c in chunks if c.get("done", False)]
+
+
+class _ChainPlugin(BasePlugin):
+    """Plugin that appends a marker to the payload."""
+
+    def __init__(self, name: str, marker: str) -> None:
+        self._name = name
+        self._marker = marker
+
+    @property
+    def metadata(self) -> PluginMetadata:
+        return PluginMetadata(name=self._name)
+
+    def setup(self) -> None:
+        pass
+
+    def teardown(self) -> None:
+        pass
+
+    def on_agent_run(
+        self, agent_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        markers = list(payload.get("markers", []))
+        markers.append(self._marker)
+        return {**payload, "markers": markers}
+
+
+class TestMutableMiddleware:
+    def test_payload_augment_plugin(self) -> None:
+        reg = PluginRegistry()
+        reg.load(_PayloadAugmentPlugin())
+        result = reg.dispatch_run("agent", {"prompt": "hi"})
+        assert result["prompt"] == "hi"
+        assert result["system"] == "You are a helpful assistant."
+
+    def test_chunk_filter_plugin(self) -> None:
+        reg = PluginRegistry()
+        reg.load(_ChunkFilterPlugin())
+        chunks = [
+            {"chunk": "a", "done": False},
+            {"chunk": "b", "done": False},
+            {"output": "ab", "done": True},
+        ]
+        result = reg.dispatch_result("agent", chunks, 100.0)
+        assert len(result) == 1
+        assert result[0]["done"] is True
+
+    def test_plugins_apply_in_load_order(self) -> None:
+        """Transformations compose: each plugin sees the previous plugin's result."""
+        reg = PluginRegistry()
+        reg.load(_ChainPlugin("first", "A"))
+        reg.load(_ChainPlugin("second", "B"))
+        result = reg.dispatch_run("agent", {})
+        assert result["markers"] == ["A", "B"]
+
+    def test_noop_plugin_does_not_change_payload(self) -> None:
+        """A plugin returning None leaves the payload unchanged."""
+        reg = PluginRegistry()
+        reg.load(_GoodPlugin())
+        payload = {"prompt": "original"}
+        result = reg.dispatch_run("agent", payload)
+        assert result == payload
+
+    def test_failing_transform_plugin_skipped(self) -> None:
+        """A plugin that raises must not corrupt the payload chain."""
+        reg = PluginRegistry()
+        reg.load(_FailingHooksPlugin())
+        reg.load(_ChainPlugin("safe", "safe"))
+        # _FailingHooksPlugin raises, should be swallowed; _ChainPlugin runs
+        result = reg.dispatch_run("agent", {})
+        assert "markers" in result
+        assert "safe" in result["markers"]
+
+    def test_empty_registry_returns_payload_unchanged(self) -> None:
+        reg = PluginRegistry()
+        payload = {"x": 1}
+        assert reg.dispatch_run("agent", payload) == payload
+        chunks = [{"done": True}]
+        assert reg.dispatch_result("agent", chunks, 1.0) == chunks

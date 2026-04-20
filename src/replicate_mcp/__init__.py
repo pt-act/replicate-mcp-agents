@@ -15,8 +15,21 @@ Phase 4 public surface:
     - :mod:`~replicate_mcp.server` — ``serve_http``, ``serve_streamable_http``,
       ``get_asgi_app`` for cloud-hosted MCP deployments.
     - :mod:`~replicate_mcp.sdk` — ``register_workflow``, ``get_workflow``, ``list_workflows``.
+
+Phase 5a public surface:
+    - :mod:`~replicate_mcp.utils.router_state` — ``RouterStateManager`` for durable
+      routing intelligence across restarts.
+    - :mod:`~replicate_mcp.utils.audit` — ``AuditLogger`` + ``AuditRecord`` for local
+      invocation audit log and cost dashboard.
+    - :mod:`~replicate_mcp.cache` — ``ResultCache`` for content-addressed result
+      caching during development.
+    - :mod:`~replicate_mcp.sdk` — ``load_workflows_file`` for YAML workflow config.
+    - Plugin middleware: ``on_agent_run`` / ``on_agent_result`` hooks now return
+      optional replacement payloads / chunk-lists for mutable middleware.
+    - ``AgentExecutor`` now accepts ``plugin_registry``, ``audit_logger``, ``cache``.
 """
 
+from replicate_mcp.cache import ResultCache
 from replicate_mcp.discovery import DiscoveryConfig, ModelDiscovery, discover_and_register
 from replicate_mcp.distributed import (
     DistributedExecutor,
@@ -34,11 +47,14 @@ from replicate_mcp.sdk import (
     agent,
     get_workflow,
     list_workflows,
+    load_workflows_file,
     register_workflow,
 )
+from replicate_mcp.utils.audit import AuditLogger, AuditRecord
+from replicate_mcp.utils.router_state import RouterStateManager
 from replicate_mcp.worker_server import WorkerHttpApp, serve_worker
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "__version__",
@@ -54,6 +70,7 @@ __all__ = [
     "register_workflow",
     "get_workflow",
     "list_workflows",
+    "load_workflows_file",
     # qos
     "QoSLevel",
     "QoSPolicy",
@@ -73,4 +90,11 @@ __all__ = [
     # worker server
     "WorkerHttpApp",
     "serve_worker",
+    # Phase 5a — router state persistence
+    "RouterStateManager",
+    # Phase 5a — audit log + cost dashboard
+    "AuditLogger",
+    "AuditRecord",
+    # Phase 5a — result cache
+    "ResultCache",
 ]

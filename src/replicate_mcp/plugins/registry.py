@@ -109,26 +109,57 @@ class PluginRegistry:
         self,
         agent_name: str,
         payload: dict[str, Any],
-    ) -> None:
-        """Call :meth:`~BasePlugin.on_agent_run` on all plugins."""
+    ) -> dict[str, Any]:
+        """Call :meth:`~BasePlugin.on_agent_run` on all plugins in load order.
+
+        Each plugin may return a replacement payload dict (mutable middleware).
+        Returning ``None`` passes the payload through unchanged.  Plugins are
+        applied sequentially so transformations compose correctly.
+
+        Args:
+            agent_name: The agent being invoked.
+            payload:    The original input payload.
+
+        Returns:
+            The (potentially transformed) payload after all plugins have run.
+        """
         for plugin in self._plugins.values():
             try:
-                plugin.on_agent_run(agent_name, payload)
+                result = plugin.on_agent_run(agent_name, payload)
+                if result is not None:
+                    payload = result
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Plugin %r on_agent_run raised: %s", plugin.name, exc)
+        return payload
 
     def dispatch_result(
         self,
         agent_name: str,
         chunks: list[dict[str, Any]],
         latency_ms: float,
-    ) -> None:
-        """Call :meth:`~BasePlugin.on_agent_result` on all plugins."""
+    ) -> list[dict[str, Any]]:
+        """Call :meth:`~BasePlugin.on_agent_result` on all plugins in load order.
+
+        Each plugin may return a replacement chunk list (mutable middleware).
+        Returning ``None`` passes the chunk list through unchanged.  Plugins
+        are applied sequentially so transformations compose correctly.
+
+        Args:
+            agent_name: The agent that was invoked.
+            chunks:     The output chunks produced by the executor.
+            latency_ms: Wall-clock duration of the invocation in milliseconds.
+
+        Returns:
+            The (potentially transformed) chunk list after all plugins have run.
+        """
         for plugin in self._plugins.values():
             try:
-                plugin.on_agent_result(agent_name, chunks, latency_ms)
+                result = plugin.on_agent_result(agent_name, chunks, latency_ms)
+                if result is not None:
+                    chunks = result
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Plugin %r on_agent_result raised: %s", plugin.name, exc)
+        return chunks
 
     def dispatch_error(
         self,

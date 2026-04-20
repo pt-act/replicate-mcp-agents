@@ -46,7 +46,10 @@ from replicate_mcp.resilience import (
 )
 
 if TYPE_CHECKING:
+    from replicate_mcp.cache import ResultCache
     from replicate_mcp.discovery import ModelDiscovery
+    from replicate_mcp.plugins.registry import PluginRegistry
+    from replicate_mcp.utils.audit import AuditLogger
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +206,12 @@ class AgentExecutor:
         circuit_breaker_config: CircuitBreakerConfig | None = None,
         rate_limiter: TokenBucket | None = None,
         observability: Observability | None = None,
+        # Phase 5a: plugin middleware
+        plugin_registry: PluginRegistry | None = None,
+        # Phase 5a: audit logging
+        audit_logger: AuditLogger | None = None,
+        # Phase 5a: content-addressed result cache
+        cache: ResultCache | None = None,
     ) -> None:
         self._model_map = model_map or dict(DEFAULT_MODEL_MAP)
         self._api_token = api_token or os.environ.get("REPLICATE_API_TOKEN", "")
@@ -219,6 +228,12 @@ class AgentExecutor:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._rate_limiter = rate_limiter  # may be None (no rate limit)
         self._obs = observability or default_observability
+        # Phase 5a: mutable middleware plugin registry
+        self._plugin_registry: PluginRegistry | None = plugin_registry
+        # Phase 5a: invocation audit log
+        self._audit_logger: AuditLogger | None = audit_logger
+        # Phase 5a: content-addressed result cache
+        self._cache: ResultCache | None = cache
 
     @property
     def catalogue(self) -> ModelCatalogue:
@@ -301,6 +316,24 @@ class AgentExecutor:
         last_error: Exception | None = None
         start = time.monotonic()
 
+        # Phase 5a: allow plugin middleware to transform the input payload
+        if self._plugin_registry is not None:
+            payload = self._plugin_registry.dispatch_run(agent_id, payload)
+
+        # Phase 5a: serve from cache if available (opt-in, disabled by default)
+        if self._cache is not None:
+            from replicate_mcp.cache import ResultCache  # noqa: PLC0415
+
+            cache_key = ResultCache.make_key(model_id, payload)
+            cached_chunks = self._cache.get(cache_key)
+            if cached_chunks is not None:
+                logger.debug("Cache HIT for %s — skipping API call", model_id)
+                for chunk in cached_chunks:
+                    yield chunk
+                return
+        else:
+            cache_key = ""
+
         with self._obs.span(
             "agent.run",
             **{"agent.id": agent_id, "model.id": model_id},
@@ -316,20 +349,67 @@ class AgentExecutor:
                     breaker.pre_call()
 
                     async with self._semaphore:
-                        async for chunk in self._invoke(agent_id, model_id, payload, start):
-                            yield chunk
+                        needs_buffer = (
+                            self._plugin_registry is not None
+                            or self._cache is not None
+                        )
+                        if needs_buffer:
+                            # Buffer chunks for plugin transforms and/or cache writes
+                            collected_chunks: list[dict[str, Any]] = []
+                            async for chunk in self._invoke(
+                                agent_id, model_id, payload, start
+                            ):
+                                collected_chunks.append(chunk)
 
-                    # Success — update breaker + record telemetry
+                            elapsed_ms = (time.monotonic() - start) * 1000
+
+                            # Apply result plugin transforms (if any)
+                            if self._plugin_registry is not None:
+                                collected_chunks = self._plugin_registry.dispatch_result(
+                                    agent_id, collected_chunks, elapsed_ms
+                                )
+
+                            # Store in cache (before yielding, in case of error)
+                            if self._cache is not None and cache_key:
+                                self._cache.put(cache_key, collected_chunks)
+
+                            for chunk in collected_chunks:
+                                yield chunk
+                        else:
+                            async for chunk in self._invoke(
+                                agent_id, model_id, payload, start
+                            ):
+                                yield chunk
+
+                    # Success — update breaker + record telemetry + audit
                     breaker.record_success()
                     elapsed_ms = (time.monotonic() - start) * 1000
                     self._obs.record_invocation(
                         model_id, elapsed_ms, 0.0, success=True
                     )
+                    if self._audit_logger is not None:
+                        self._audit_logger.record(
+                            agent=agent_id,
+                            model=model_id,
+                            latency_ms=elapsed_ms,
+                            cost_usd=0.0,
+                            success=True,
+                            payload=payload,
+                        )
                     return
 
                 except CircuitOpenError:
                     self._obs.record_circuit_trip(model_id)
                     elapsed_ms = (time.monotonic() - start) * 1000
+                    if self._audit_logger is not None:
+                        self._audit_logger.record(
+                            agent=agent_id,
+                            model=model_id,
+                            latency_ms=elapsed_ms,
+                            cost_usd=0.0,
+                            success=False,
+                            payload=payload,
+                        )
                     yield {
                         "agent": agent_id,
                         "model": model_id,
@@ -346,6 +426,9 @@ class AgentExecutor:
                     self._obs.record_invocation(
                         model_id, elapsed_ms, 0.0, success=False
                     )
+                    # Phase 5a: notify plugins of errors
+                    if self._plugin_registry is not None:
+                        self._plugin_registry.dispatch_error(agent_id, exc)
 
                     if attempt < self._retry_config.max_retries:
                         delay = compute_retry_delay(attempt, self._retry_config)

@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-04-20
+
+### Added (Phase 5a · Developer-First Hardening)
+
+**1. Persistent Router State (`utils/router_state.py`)**
+- `CostAwareRouter.dump_state()` — serialises all `ModelStats` to a JSON-safe dict.
+- `CostAwareRouter.load_state(data)` — restores per-model statistics from a snapshot; unknown keys ignored for forward compatibility.
+- `RouterStateManager(path)` — atomic save/load using `tempfile + os.replace` (same crash-safe pattern as `CheckpointManager`).  Default path: `~/.replicate/router-state.json`.
+- `RouterStateManager.auto_save(router, interval_s, save_on_exit)` — async context manager that saves on a background loop and performs a final save on exit.
+- Re-exported from top-level `__init__` as `from replicate_mcp import RouterStateManager`.
+- **Rationale:** Thompson Sampling posteriors and EMA statistics represent real accumulated signal from production API calls.  Without persistence every restart is a cold-start that discards all learned routing knowledge, wastes budget on re-exploration, and degrades routing quality until the warm-up period completes again.
+
+**2. Mutable Plugin Middleware (`plugins/base.py`, `plugins/registry.py`, `agents/execution.py`)**
+- `BasePlugin.on_agent_run` return type changed from `None` to `dict[str, Any] | None`.  Returning a non-`None` dict **replaces** the payload forwarded to the model (enables prompt augmentation, PII scrubbing, validation, cost-cap enforcement).
+- `BasePlugin.on_agent_result` return type changed from `None` to `list[dict[str, Any]] | None`.  Returning a non-`None` list **replaces** the chunk sequence (enables output filtering, guardrails).
+- `PluginRegistry.dispatch_run` now returns the (possibly transformed) payload; `dispatch_result` returns the (possibly transformed) chunk list.  Plugins compose sequentially — each sees the previous plugin's result.
+- `AgentExecutor` gains `plugin_registry: PluginRegistry | None = None` constructor parameter and calls `dispatch_run` before invoking and `dispatch_result` / `dispatch_error` after.
+- **Breaking note:** Existing `BasePlugin` subclasses that declare `-> None` on their hook methods should update to `-> dict | None` / `-> list | None`; existing behaviour (returning nothing) is fully backward-compatible.
+- **Rationale:** `PluginRegistry.dispatch_*` existed since Phase 3 but was never wired into `AgentExecutor`.  Hooks were observational and non-transformative.  This makes the plugin system production-ready for guardrails, PII scrubbing, and prompt augmentation — which are table-stakes requirements for enterprise deployments.
+
+**3. Declarative YAML Workflow Configuration (`sdk.py`, `cli/main.py`)**
+- `load_workflows_file(path: str | Path) -> int` — parses a YAML file and registers all workflows via `WorkflowBuilder`.  Supports all `WorkflowStep` attributes: `agent`, `input_map`, `condition`.  Returns the count of successfully loaded workflows.
+- `reset_workflow_registry()` — clears the module-level workflow registry (parallel to `reset_default_registry()`; useful in tests).
+- `replicate-agent serve --workflows-file <path>` — loads a workflow YAML file before starting the MCP server.
+- YAML schema: `workflows: [{name, description, steps: [{agent, input_map, condition}]}]`.  Condition expressions are passed to the existing `SafeEvaluator`.
+- **Rationale:** Workflows previously required Python code and could not be defined by non-Python users, stored in version control as plain config, or managed via GitOps pipelines.  `pyyaml` was already a core dependency.
+
+**4. Local Invocation Audit Log + Cost Dashboard (`utils/audit.py`, `cli/main.py`)**
+- `AuditLogger(path, enabled)` — appends one JSON line per invocation to `~/.replicate/audit.jsonl`.  Each record contains: `ts`, `agent`, `model`, `latency_ms`, `cost_usd`, `success`, `input_hash` (SHA-256 of payload, privacy-safe by default), `session_id`.
+- `log_inputs=True` opt-in stores the actual payload in the record for debugging.
+- `AuditLogger.read_records()` → list of `AuditRecord` dataclasses.
+- `AgentExecutor` gains `audit_logger: AuditLogger | None = None` constructor parameter and records after every successful invocation and circuit-breaker trip.
+- CLI `audit` subgroup with four commands:
+  - `replicate-agent audit tail [--n N] [--agent NAME]` — rich table of recent invocations.
+  - `replicate-agent audit costs [--period today|week|month|all]` — spend breakdown by model with totals row.
+  - `replicate-agent audit stats [AGENT] [--period ...]` — p50/p95/p99 latency + success rate per agent.
+  - `replicate-agent audit clear` — prompts for confirmation then deletes the log file.
+- **Rationale:** "What did my agent do?" and "How much did I spend?" are the two most common questions in AI API development.  Without this, developers must either instrument manually or run a full OTel stack.  The audit log is zero-config, zero-dependency, and immediately useful on day one.
+
+**5. Content-Addressed Result Cache (`cache.py`, `agents/execution.py`)**
+- `ResultCache(ttl_s, max_entries)` — in-memory LRU cache keyed on `SHA-256(model_id + sorted-JSON(payload))`.
+- `make_key(model_id, payload) -> str` — 32-character hex key, payload-order-independent.
+- `get(key)` / `put(key, chunks)` — returns/stores a copy of the chunk list.  LRU eviction when `max_entries` is reached.  Returns `None` on miss or expired entry.
+- `evict_expired()`, `invalidate(key)`, `clear()` — management helpers.
+- `.hits`, `.misses`, `.hit_rate` — introspection counters.
+- `AgentExecutor` gains `cache: ResultCache | None = None` constructor parameter.  Cache is checked before the API call; on success the chunks are stored.  Default is `None` (disabled) — production workloads are unaffected.
+- **Rationale:** Identical requests during development (prompt iteration, workflow debugging) cost money and take 2–10 seconds each.  A 5-minute cache eliminates these redundant calls.  Opt-in design ensures no stale responses in production.
+
+### Changed
+- `AgentExecutor.__init__` now accepts three new optional keyword arguments: `plugin_registry`, `audit_logger`, `cache`.
+- `BasePlugin.on_agent_run` / `on_agent_result` return types updated from `None` to `dict | None` / `list | None` (backward-compatible; implicit `None` return = pass-through).
+- `PluginRegistry.dispatch_run` / `dispatch_result` now return the transformed payload / chunk list.
+- `__version__` bumped to `0.6.0`.
+
+### Tests
+- 123 new tests across 6 files: `test_router_state.py` (new), `test_audit.py` (new), `test_cache.py` (new), `test_plugins.py` (updated for mutable hooks), `test_sdk.py` (YAML workflow loading), `test_cli.py` (audit commands + `--workflows-file`), `test_execution.py` (Phase 5a integration).
+- Total: **764 tests**, **90% line coverage** (gate: ≥90%).
+
+---
+
 ## [0.5.0] — 2026-04-20
 
 ### Added (Phase 4 · Sprints S13–S16 — Scale)

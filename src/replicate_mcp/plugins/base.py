@@ -111,27 +111,52 @@ class BasePlugin(ABC):
         self,
         agent_name: str,
         payload: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any] | None:
         """Called before each agent invocation.
+
+        Returning a non-``None`` dict **replaces** the payload forwarded to
+        the model.  Returning ``None`` (the default) passes the original
+        payload through unchanged.  This makes the hook a first-class
+        middleware point for prompt augmentation, PII scrubbing, validation,
+        etc.
 
         Args:
             agent_name: The ``safe_name`` of the agent being invoked.
-            payload:    The input payload (read-only reference).
+            payload:    The input payload about to be sent to the model.
+
+        Returns:
+            A replacement payload dict, or ``None`` to leave it unchanged.
+
+        Example — inject a system instruction into every prompt::
+
+            def on_agent_run(self, agent_name, payload):
+                return {**payload, "system": "You are a helpful assistant."}
         """
+        return None  # default: pass through unchanged
 
     def on_agent_result(
         self,
         agent_name: str,
         chunks: list[dict[str, Any]],
         latency_ms: float,
-    ) -> None:
+    ) -> list[dict[str, Any]] | None:
         """Called after a successful agent invocation.
+
+        Returning a non-``None`` list **replaces** the chunk sequence that is
+        yielded to the caller.  Returning ``None`` (the default) passes the
+        original chunks through unchanged.  This makes the hook a first-class
+        middleware point for output filtering, guardrails, cost-cap logging,
+        etc.
 
         Args:
             agent_name:  The ``safe_name`` of the agent.
             chunks:      The output chunks returned by the executor.
-            latency_ms:  Wall-clock duration of the invocation.
+            latency_ms:  Wall-clock duration of the invocation in milliseconds.
+
+        Returns:
+            A replacement chunk list, or ``None`` to leave it unchanged.
         """
+        return None  # default: pass through unchanged
 
     def on_error(
         self,
@@ -139,6 +164,9 @@ class BasePlugin(ABC):
         error: Exception,
     ) -> None:
         """Called when an agent invocation raises an unhandled exception.
+
+        This hook is observational only — the exception always propagates
+        regardless of the return value.
 
         Args:
             agent_name: The ``safe_name`` of the agent.

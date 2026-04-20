@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner, Result
@@ -349,3 +350,194 @@ class TestAgentsRunExtended:
             env={"REPLICATE_API_TOKEN": ""},
         )
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — audit CLI commands
+# ---------------------------------------------------------------------------
+
+
+class TestAuditCommands:
+    """Tests for the `audit` CLI subgroup."""
+
+    @pytest.fixture()
+    def audit_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """Fixture that redirects the default audit log path to a temp file and
+        pre-populates it with a handful of sample records."""
+        from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+        log_path = tmp_path / "audit.jsonl"
+        # Patch the module-level default so that AuditLogger() uses the tmp path
+        monkeypatch.setattr("replicate_mcp.utils.audit._DEFAULT_AUDIT_PATH", log_path)
+        log = AuditLogger(path=log_path)
+        log.record(agent="summariser", model="meta/llama", latency_ms=3000.0,
+                   cost_usd=0.002, success=True)
+        log.record(agent="classifier", model="meta/llama", latency_ms=1500.0,
+                   cost_usd=0.001, success=True)
+        log.record(agent="summariser", model="black-forest-labs/flux", latency_ms=5000.0,
+                   cost_usd=0.003, success=False)
+        return log
+
+    def test_audit_help(self) -> None:
+        result = _run("audit", "--help")
+        assert result.exit_code == 0
+        assert "audit" in result.output.lower()
+
+    def test_audit_tail_help(self) -> None:
+        result = _run("audit", "tail", "--help")
+        assert result.exit_code == 0
+        assert "--n" in result.output
+
+    def test_audit_costs_help(self) -> None:
+        result = _run("audit", "costs", "--help")
+        assert result.exit_code == 0
+        assert "--period" in result.output
+
+    def test_audit_stats_help(self) -> None:
+        result = _run("audit", "stats", "--help")
+        assert result.exit_code == 0
+
+    def test_audit_clear_help(self) -> None:
+        result = _run("audit", "clear", "--help")
+        assert result.exit_code == 0
+
+    def test_audit_tail_empty_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """tail prints a helpful message when log is absent."""
+        monkeypatch.setattr(
+            "replicate_mcp.utils.audit._DEFAULT_AUDIT_PATH",
+            tmp_path / "absent.jsonl"
+        )
+        result = _run("audit", "tail")
+        assert result.exit_code == 0
+
+    def test_audit_tail_with_records(self, audit_log: Any) -> None:
+        """tail prints a table of records."""
+        result = _run("audit", "tail")
+        assert result.exit_code == 0
+        assert "summariser" in result.output or "meta/llama" in result.output
+
+    def test_audit_tail_n_option(self, audit_log: Any) -> None:
+        """--n limits the number of rows shown."""
+        result = _run("audit", "tail", "--n", "1")
+        assert result.exit_code == 0
+
+    def test_audit_tail_filter_agent(self, audit_log: Any) -> None:
+        """--agent filters by agent name."""
+        result = _run("audit", "tail", "--agent", "summariser")
+        assert result.exit_code == 0
+
+    def test_audit_costs_no_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """costs prints a message when log is absent."""
+        monkeypatch.setattr(
+            "replicate_mcp.utils.audit._DEFAULT_AUDIT_PATH",
+            tmp_path / "absent.jsonl"
+        )
+        result = _run("audit", "costs")
+        assert result.exit_code == 0
+
+    def test_audit_costs_with_records(self, audit_log: Any) -> None:
+        """costs shows the spend table."""
+        result = _run("audit", "costs", "--period", "all")
+        assert result.exit_code == 0
+        assert "TOTAL" in result.output
+
+    def test_audit_costs_period_choices(self, audit_log: Any) -> None:
+        """costs should accept all valid period values."""
+        for period in ("today", "week", "month", "all"):
+            result = _run("audit", "costs", "--period", period)
+            assert result.exit_code == 0, f"Failed for period={period}"
+
+    def test_audit_stats_no_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "replicate_mcp.utils.audit._DEFAULT_AUDIT_PATH",
+            tmp_path / "absent.jsonl"
+        )
+        result = _run("audit", "stats")
+        assert result.exit_code == 0
+
+    def test_audit_stats_with_records(self, audit_log: Any) -> None:
+        result = _run("audit", "stats", "--period", "all")
+        assert result.exit_code == 0
+
+    def test_audit_stats_filter_agent(self, audit_log: Any) -> None:
+        result = _run("audit", "stats", "summariser", "--period", "all")
+        assert result.exit_code == 0
+
+    def test_audit_stats_no_match(self, audit_log: Any) -> None:
+        result = _run("audit", "stats", "nonexistent_agent")
+        assert result.exit_code == 0
+
+    def test_audit_stats_period_choices(self, audit_log: Any) -> None:
+        for period in ("today", "week", "month", "all"):
+            result = _run("audit", "stats", "--period", period)
+            assert result.exit_code == 0, f"Failed for period={period}"
+
+    def test_audit_clear_no_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "replicate_mcp.utils.audit._DEFAULT_AUDIT_PATH",
+            tmp_path / "absent.jsonl"
+        )
+        runner = CliRunner()
+        result = runner.invoke(app, ["audit", "clear"], input="y\n")
+        assert result.exit_code == 0
+
+    def test_audit_clear_with_log(self, audit_log: Any) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["audit", "clear"], input="y\n")
+        assert result.exit_code == 0
+        assert not audit_log.exists()
+
+    def test_audit_clear_aborted(self, audit_log: Any) -> None:
+        runner = CliRunner()
+        runner.invoke(app, ["audit", "clear"], input="n\n")
+        # User said no — file should still exist
+        assert audit_log.exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — serve --workflows-file
+# ---------------------------------------------------------------------------
+
+
+class TestServeWorkflowsFile:
+    def test_serve_help_includes_workflows_file(self) -> None:
+        result = _run("serve", "--help")
+        assert "--workflows-file" in result.output
+
+    def test_serve_workflows_file_bad_path_skips_gracefully(self) -> None:
+        """Non-existent workflow file should not crash the serve command."""
+        # The serve command will try to load the file before starting the server.
+        # Since the file doesn't exist, click's Path(exists=True) validation rejects it.
+        result = _run("serve", "--workflows-file", "/nonexistent/path/wf.yaml")
+        # click raises UsageError for invalid path
+        assert result.exit_code != 0
+
+    def test_serve_workflows_file_loads_successfully(self, tmp_path: Path) -> None:
+        """A valid workflow file should be loaded at serve startup."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from replicate_mcp.sdk import reset_workflow_registry  # noqa: PLC0415
+
+        reset_workflow_registry()
+
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text(
+            "workflows:\n  - name: serve-test-wf\n    steps:\n      - agent: a\n"
+        )
+
+        runner = CliRunner()
+        # We must mock the actual server start so the command returns
+        with patch("replicate_mcp.server.serve") as mock_serve:
+            mock_serve.return_value = None
+            result = runner.invoke(
+                app,
+                ["serve", "--workflows-file", str(wf_file)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        # The loaded workflow should have been registered
+        from replicate_mcp.sdk import get_workflow  # noqa: PLC0415
+
+        assert get_workflow("serve-test-wf") is not None
+        reset_workflow_registry()

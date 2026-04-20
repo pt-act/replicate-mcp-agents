@@ -3291,7 +3291,7 @@ description = "The lightning-fast ASGI server."
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "sys_platform != \"emscripten\""
+markers = "sys_platform != \"emscripten\" or extra == \"http\" or extra == \"all\""
 files = [
     {file = "uvicorn-0.38.0-py3-none-any.whl", hash = "sha256:48c0afd214ceb59340075b4a052ea1ee91c16fbc2a9b1469cca0e54566977b02"},
     {file = "uvicorn-0.38.0.tar.gz", hash = "sha256:fd97093bdd120a2609fc0d3afe931d4d4ad688b6e75f0f929fde1bc36fe0e91d"},
@@ -3509,11 +3509,12 @@ test = ["coverage[toml]", "zope.event", "zope.testing"]
 testing = ["coverage[toml]", "zope.event", "zope.testing"]
 
 [extras]
-all = ["locust", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk"]
+all = ["locust", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk", "uvicorn"]
+http = ["uvicorn"]
 load = ["locust"]
 otel = ["opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "976563e8c3c377d45bc002a837546cafadd4d43434afa83a2badf18361804446"
+content-hash = "49058cbee5a0d97d9c91cc6ecaafae2186bc00348ccf6148ba2ca7d1eb441e5c"

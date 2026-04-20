@@ -46,6 +46,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Per-model statistics
@@ -318,6 +319,45 @@ class CostAwareRouter:
     def stats(self) -> dict[str, ModelStats]:
         """Return a snapshot of statistics for all registered models."""
         return dict(self._stats)
+
+    # ---- persistence helpers ----
+
+    def dump_state(self) -> dict[str, Any]:
+        """Serialise all per-model statistics to a JSON-safe dict.
+
+        The returned structure is consumed by
+        :class:`~replicate_mcp.utils.router_state.RouterStateManager` and can
+        be round-tripped through :meth:`load_state`.
+
+        Returns:
+            Mapping of model identifier → serialised :class:`ModelStats` dict.
+        """
+        from replicate_mcp.utils.router_state import serialise_stats  # noqa: PLC0415
+
+        return {model: serialise_stats(s) for model, s in self._stats.items()}
+
+    def load_state(self, data: dict[str, Any]) -> None:
+        """Restore per-model statistics from a previously :meth:`dump_state` dict.
+
+        Existing entries are overwritten; models absent from *data* are
+        untouched.  Unknown keys inside each model dict are silently ignored
+        for forward compatibility.
+
+        Args:
+            data: Mapping of model identifier → raw stats dict, as produced by
+                  :meth:`dump_state`.
+        """
+        from replicate_mcp.utils.router_state import deserialise_stats  # noqa: PLC0415
+
+        for model, raw in data.items():
+            try:
+                self._stats[model] = deserialise_stats(raw)
+            except (TypeError, KeyError) as exc:
+                import logging  # noqa: PLC0415
+
+                logging.getLogger(__name__).warning(
+                    "Could not restore router state for model %r: %s", model, exc
+                )
 
     def leaderboard(self) -> list[tuple[str, float]]:
         """Return models sorted by EMA cost (cheapest first).
