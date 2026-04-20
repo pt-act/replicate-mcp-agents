@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -13,7 +18,7 @@ class TelemetryEvent:
     agent_id: str
     cost_usd: float
     latency_ms: float
-    timestamp: datetime = datetime.utcnow()
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 class TelemetryTracker:

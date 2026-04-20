@@ -24,10 +24,12 @@ jobs:
         with:
           virtualenvs-create: false
       - name: Install dependencies
-        run: poetry install --with dev,mcp --without docs
+        run: poetry install --with dev --without docs
       - name: Lint with Ruff
         run: poetry run ruff check .
       - name: Type check with mypy
         run: poetry run mypy src/
-      - name: Run tests
-        run: poetry run pytest
+      - name: Run tests with coverage
+        run: poetry run pytest --cov-fail-under=75
+        env:
+          REPLICATE_API_TOKEN: ""  # tests use mocked API calls

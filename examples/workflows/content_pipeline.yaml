@@ -17,7 +17,7 @@ agents:
 edges:
   - from: ideator
     to: image_gen
-    transform: "lambda x: {'prompt': x['enhanced_prompt']}"
+    transform: extract_prompt            # registered in TransformRegistry
   - from: image_gen
     to: critic
-    condition: "lambda x: x.get('quality_threshold', 0) > 0.7"
+    condition: quality_above_0_7         # registered in TransformRegistry

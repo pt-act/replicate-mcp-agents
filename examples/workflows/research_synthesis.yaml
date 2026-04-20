@@ -19,10 +19,10 @@ agents:
 edges:
   - from: orchestrator
     to: searcher
-    transform: "lambda x: {'query': x['topic']}"
+    transform: extract_query             # registered in TransformRegistry
   - from: searcher
     to: analyst
-    transform: "lambda x: {'sources': x['results']}"
+    transform: extract_sources           # registered in TransformRegistry
   - from: analyst
     to: summariser
-    transform: "lambda x: {'analysis': x['report']}"
+    transform: extract_analysis          # registered in TransformRegistry
