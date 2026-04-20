@@ -321,17 +321,14 @@ class AdaptiveRouter(UCB1Router):
         # Exploitation phase — use Thompson Sampling via shared stats
         for m in candidates:
             stats = self._ensure_registered(m)
-            if m not in self._ts_router._stats:  # noqa: SLF001
-                self._ts_router.register_model(
-                    m,
-                    initial_cost=stats.ema_cost_usd,
-                    initial_latency_ms=stats.ema_latency_ms,
-                    initial_quality=stats.ema_quality,
-                )
-            # Sync posterior parameters
-            ts_stats = self._ts_router._stats[m]  # noqa: SLF001
-            ts_stats.ts_alpha = stats.ts_alpha
-            ts_stats.ts_beta = stats.ts_beta
+            self._ts_router.register_model(
+                m,
+                initial_cost=stats.ema_cost_usd,
+                initial_latency_ms=stats.ema_latency_ms,
+                initial_quality=stats.ema_quality,
+            )
+            # Sync posterior parameters via the public API — no private access
+            self._ts_router.sync_stats(m, ts_alpha=stats.ts_alpha, ts_beta=stats.ts_beta)
 
         return self._ts_router.select_model(candidates)
 

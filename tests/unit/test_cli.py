@@ -122,26 +122,29 @@ class TestWorkflowsCommands:
         # Should print validation error and exit 1
         assert result.exit_code == 1
 
-    def test_workflows_run_with_json_input(self) -> None:
+    def test_workflows_run_unregistered_exits_1(self) -> None:
+        """Running a workflow that is not registered should exit with code 1."""
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["workflows", "run", "my_wf", "--input", '{"key": "value"}'],
+            ["workflows", "run", "nonexistent_wf", "--input", '{"key": "value"}'],
             catch_exceptions=False,
         )
-        # Phase 3 placeholder — just verify no crash
-        assert result.exit_code == 0
+        # Phase 4: fully implemented — exits 1 when workflow not in registry
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower() or "not found" in (result.output or "")
 
-    def test_workflows_run_with_file_input(self, tmp_path: Path) -> None:
+    def test_workflows_run_with_file_input_unregistered(self, tmp_path: Path) -> None:
+        """Running with a file payload but unregistered workflow exits 1."""
         input_file = tmp_path / "input.json"
         input_file.write_text('{"prompt": "hello"}')
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["workflows", "run", "my_wf", "--input", str(input_file)],
+            ["workflows", "run", "nonexistent_wf", "--input", str(input_file)],
             catch_exceptions=False,
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 1
 
     def test_workflows_run_invalid_json_fails(self) -> None:
         runner = CliRunner()
@@ -236,3 +239,113 @@ class TestLoadPayload:
         with pytest.raises(SystemExit) as exc_info:
             _load_payload(str(f))
         assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — serve command
+# ---------------------------------------------------------------------------
+
+
+class TestServeCommand:
+    def test_serve_help(self) -> None:
+        result = _run("serve", "--help")
+        assert result.exit_code == 0
+        assert "stdio" in result.output
+        assert "sse" in result.output
+
+    def test_serve_invalid_transport_fails(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["serve", "--transport", "grpc"])
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — workers commands
+# ---------------------------------------------------------------------------
+
+
+class TestWorkersCommands:
+    def test_workers_help(self) -> None:
+        result = _run("workers", "--help")
+        assert result.exit_code == 0
+        assert "start" in result.output
+
+    def test_workers_start_help(self) -> None:
+        result = _run("workers", "start", "--help")
+        assert result.exit_code == 0
+        assert "--port" in result.output
+
+    def test_workers_ping_help(self) -> None:
+        result = _run("workers", "ping", "--help")
+        assert result.exit_code == 0
+
+    def test_workers_ping_healthy(self) -> None:
+        """Ping a 'healthy' mocked transport."""
+        from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+        runner = CliRunner()
+        with patch(
+            "replicate_mcp.distributed.HttpWorkerTransport.health_check",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "replicate_mcp.distributed.HttpWorkerTransport.get_metrics",
+            new=AsyncMock(return_value={"active_tasks": 0, "total_processed": 5}),
+        ):
+            result = runner.invoke(
+                app, ["workers", "ping", "http://localhost:7999"], catch_exceptions=False
+            )
+        assert result.exit_code == 0
+        assert "healthy" in result.output.lower()
+
+    def test_workers_ping_unreachable_exits_1(self) -> None:
+        """Ping an unreachable worker exits with code 1."""
+        from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+        runner = CliRunner()
+        with patch(
+            "replicate_mcp.distributed.HttpWorkerTransport.health_check",
+            new=AsyncMock(return_value=False),
+        ):
+            result = runner.invoke(app, ["workers", "ping", "http://localhost:7999"])
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — agents run extended flags
+# ---------------------------------------------------------------------------
+
+
+class TestAgentsRunExtended:
+    def test_agents_run_json_flag_help(self) -> None:
+        result = _run("agents", "run", "--help")
+        assert "--json" in result.output
+        assert "--model" in result.output
+
+    def test_agents_run_missing_token_exits_1(self) -> None:
+        """agents run should exit 1 when REPLICATE_API_TOKEN is not set."""
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["agents", "run", "llama3_chat", "--input", '{"prompt": "hi"}'],
+            env={"REPLICATE_API_TOKEN": ""},
+        )
+        assert result.exit_code == 1
+
+    def test_workflows_list_output(self) -> None:
+        """workflows list should not crash and print a table."""
+        result = _run("workflows", "list")
+        assert result.exit_code == 0
+
+    def test_workflows_run_registered_without_token_exits_1(self) -> None:
+        """If workflow is registered but token is missing, exit 1."""
+        from replicate_mcp.sdk import WorkflowBuilder, register_workflow  # noqa: PLC0415
+
+        spec = WorkflowBuilder("cli-test-wf").then("some_agent").build()
+        register_workflow(spec)
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["workflows", "run", "cli-test-wf", "--input", '{"k": "v"}'],
+            env={"REPLICATE_API_TOKEN": ""},
+        )
+        assert result.exit_code == 1

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-04-20
+
+### Added (Phase 4 · Sprints S13–S16 — Scale)
+
+**Code Defect Fixes (from academic evaluation)**
+- **`distributed.py:125`** — `asyncio.get_event_loop().create_future()` replaced with `asyncio.get_running_loop().create_future()` (PEP 3156 compliance; avoids DeprecationWarning on Python 3.10+).
+- **`resilience.py:135–142`** — `CircuitBreaker.state` property is now a **pure getter** (no side effects). OPEN→HALF-OPEN recovery moved to `_maybe_recover()`, called by `can_execute()` and `pre_call()`. Property reads are now idempotent.
+- **`resilience.py:__all__`** — Duplicate `RetryConfig` entry in `__all__` removed.
+
+**CostAwareRouter Encapsulation Fix**
+- **`routing.py`** — Added `sync_stats(model, *, ts_alpha, ts_beta)` public method to `CostAwareRouter`. Replaces the `# noqa: SLF001` private-attribute access in `AdaptiveRouter`.
+- **`qos.py`** — `AdaptiveRouter.select_model()` updated to call `sync_stats()` instead of directly manipulating `_ts_router._stats`. Encapsulation is now clean; all `SLF001` suppressions removed.
+
+**ModelCatalogue → ModelDiscovery Consolidation**
+- **`agents/execution.py`** — `ModelCatalogue` deprecated with a `DeprecationWarning` on first use; its `discover()` delegates internally to `ModelDiscovery`. `AgentExecutor` gains a `discovery: ModelDiscovery | None` constructor parameter. `resolve_model()` now checks the `ModelDiscovery` registry first (before falling back to the legacy catalogue).
+- **`discovery.py`** — Unchanged; now the canonical discovery backend.
+
+**HTTP/SSE MCP Transport**
+- **`server.py`** — Added `serve_http(host, port, mount_path, log_level)` (SSE transport), `serve_streamable_http(host, port, log_level)` (MCP 1.x Streamable HTTP), and `get_asgi_app(transport, mount_path)` (embed in existing ASGI apps). All three use the `FastMCP.sse_app()` / `FastMCP.streamable_http_app()` that are already in the MCP SDK.
+- **`pyproject.toml`** — New `[http]` optional extra: `uvicorn>=0.29.0,<1.0.0`. Added to `[all]`.
+
+**Real Network-Distributed Workers**
+- **`distributed.py`** — Added `WorkerTransport` ABC (`submit`, `health_check`, `get_metrics`), `HttpWorkerTransport` (httpx-based client: `POST /execute`, `GET /health`, `GET /metrics`), `RemoteWorkerNode` (dispatches via transport, tracks load, pings, failover-aware). `DistributedExecutor` gains `add_remote_node()`, `remove_remote_node()`, `remote_nodes` property; `submit()` routes across local **and** remote nodes by least-loaded.
+- **`worker_server.py`** (new) — `WorkerHttpApp` Starlette ASGI app exposing `POST /execute`, `GET /health`, `GET /metrics`. `serve_worker(host, port, api_token, node_id, log_level, max_concurrency)` launches via uvicorn. (ADR-008 extension)
+
+**Complete CLI**
+- **`cli/main.py`** — New `serve` command with `--transport [stdio|sse|streamable-http]`, `--host`, `--port`, `--mount-path`, `--log-level` options. New `workers` subgroup: `workers start` (launches HTTP worker node) and `workers ping` (health-checks a remote worker). `agents run` extended with `--model` (model-path override) and `--json` (raw chunk output) flags. `workflows run` fully implemented: resolves `WorkflowSpec` from SDK registry, executes steps sequentially via `AgentExecutor`, applies `input_map`, supports per-step `anyio.move_on_after()` timeout and `--checkpoint-dir`. `workflows list` now reads the SDK workflow registry.
+- **`sdk.py`** — Added `register_workflow(spec)`, `get_workflow(name)`, `list_workflows()` backed by module-level `_workflow_registry: dict[str, WorkflowSpec]`.
+
+### Changed
+- **`__init__.py`** — Bumped to v0.5.0. Re-exports `WorkerTransport`, `HttpWorkerTransport`, `RemoteWorkerNode`, `WorkerHttpApp`, `serve_worker`, `register_workflow`, `get_workflow`, `list_workflows`.
+
+### Tests
+- 66 new tests across `test_worker_server.py` (new), `test_routing.py`, `test_distributed.py`, `test_sdk.py`, `test_server.py`, `test_execution.py`, `test_cli.py`.
+- Total: **641 tests**, **90% line coverage** (gate: ≥90%).
+
+---
+
 ## [0.4.0] — 2026-04-20
 
 ### Added (Phase 3 · Sprints S9–S12 — Differentiation)

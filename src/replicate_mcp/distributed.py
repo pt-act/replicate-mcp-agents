@@ -42,6 +42,7 @@ import asyncio
 import logging
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
@@ -122,7 +123,7 @@ class TaskHandle:
 
     def __init__(self, task_id: str) -> None:
         self._task_id = task_id
-        self._future: asyncio.Future[TaskResult] = asyncio.get_event_loop().create_future()
+        self._future: asyncio.Future[TaskResult] = asyncio.get_running_loop().create_future()
 
     @property
     def task_id(self) -> str:
@@ -427,63 +428,111 @@ class DistributedExecutor:
         max_retries: int = 2,
     ) -> None:
         self._registry = NodeRegistry(nodes)
+        self._remote_nodes: dict[str, RemoteWorkerNode] = {}
         self._max_retries = max_retries
         self._started = False
 
     # ---- node management ----
 
     def add_node(self, node: WorkerNode) -> None:
-        """Add a :class:`WorkerNode` and start its workers."""
+        """Add a local :class:`WorkerNode` and start its workers."""
         self._registry.add(node)
         if self._started:
             node.start()
 
+    def add_remote_node(self, node: RemoteWorkerNode) -> None:
+        """Add a :class:`RemoteWorkerNode` that delegates via HTTP transport.
+
+        Remote nodes participate in least-loaded routing alongside local nodes.
+
+        Example::
+
+            transport = HttpWorkerTransport("http://gpu-box:7999")
+            remote = RemoteWorkerNode("gpu-box", transport=transport)
+            executor.add_remote_node(remote)
+        """
+        self._remote_nodes[node.node_id] = node
+        logger.info("Remote node %r added to executor", node.node_id)
+
+    def remove_remote_node(self, node_id: str) -> RemoteWorkerNode | None:
+        """Remove and return the remote node with *node_id*."""
+        return self._remote_nodes.pop(node_id, None)
+
     def remove_node(self, node_id: str) -> None:
-        """Remove and stop a node."""
+        """Remove and stop a local node."""
         node = self._registry.remove(node_id)
         if node:
             asyncio.create_task(node.stop())
 
     @property
     def node_count(self) -> int:
-        """Number of nodes in the pool."""
-        return self._registry.count
+        """Total number of nodes (local + remote)."""
+        return self._registry.count + len(self._remote_nodes)
 
     @property
     def nodes(self) -> list[WorkerNode]:
-        """All registered nodes."""
+        """All registered local nodes."""
         return self._registry.all_nodes
 
+    @property
+    def remote_nodes(self) -> list[RemoteWorkerNode]:
+        """All registered remote nodes."""
+        return list(self._remote_nodes.values())
+
     # ---- task submission ----
+
+    def _least_loaded_all(self) -> WorkerNode | RemoteWorkerNode | None:
+        """Return the least-loaded node across local and remote pools."""
+        candidates: list[WorkerNode | RemoteWorkerNode] = []
+        candidates.extend(self._registry.healthy_nodes)
+        candidates.extend(
+            n for n in self._remote_nodes.values()
+            if n.health != NodeHealth.UNHEALTHY
+        )
+        if not candidates:
+            return None
+        return min(candidates, key=lambda n: n.load)
 
     async def submit(
         self,
         agent_name: str,
         payload: dict[str, Any],
     ) -> TaskHandle:
-        """Submit a task to the least-loaded healthy node.
+        """Submit a task to the least-loaded healthy node (local or remote).
+
+        Routing prefers the node with the lowest ``load`` metric across
+        both in-process :class:`WorkerNode` instances and
+        :class:`RemoteWorkerNode` instances.
 
         Returns a :class:`TaskHandle` that can be awaited to retrieve
         the :class:`TaskResult`.
 
         Raises:
             :class:`NoHealthyNodesError`: If no healthy nodes are available.
-            :class:`NodeOverloadError`: If all nodes are overloaded.
+            :class:`NodeOverloadError`: If all local nodes are overloaded.
         """
         task_id = uuid.uuid4().hex
         handle = TaskHandle(task_id)
 
         for attempt in range(self._max_retries + 1):
-            node = self._registry.least_loaded()
+            node = self._least_loaded_all()
             if node is None:
                 raise NoHealthyNodesError
 
             try:
-                node.enqueue(task_id, agent_name, payload, handle)
-                logger.debug(
-                    "Task %s submitted to %s (attempt %d)",
-                    task_id[:8], node.node_id, attempt + 1,
-                )
+                if isinstance(node, RemoteWorkerNode):
+                    # Remote dispatch is fire-and-forget; handle is resolved async
+                    await node.submit(task_id, agent_name, payload, handle)
+                    logger.debug(
+                        "Task %s dispatched to remote %s (attempt %d)",
+                        task_id[:8], node.node_id, attempt + 1,
+                    )
+                else:
+                    node.enqueue(task_id, agent_name, payload, handle)
+                    logger.debug(
+                        "Task %s enqueued on local %s (attempt %d)",
+                        task_id[:8], node.node_id, attempt + 1,
+                    )
                 return handle
             except NodeOverloadError:
                 if attempt == self._max_retries:
@@ -561,6 +610,292 @@ class DistributedExecutor:
         )
 
 
+# ---------------------------------------------------------------------------
+# Worker transport abstraction (ADR-008 extension)
+# ---------------------------------------------------------------------------
+
+
+class WorkerTransport(ABC):
+    """Abstract transport for delegating task execution to a worker node.
+
+    The :class:`WorkerNode` uses asyncio queues (in-process transport).
+    :class:`RemoteWorkerNode` replaces this with an HTTP transport so that
+    tasks can be dispatched to workers on different machines.
+
+    Custom transports can be implemented by subclassing this ABC and
+    passing instances to :class:`RemoteWorkerNode`.
+    """
+
+    @abstractmethod
+    async def submit(
+        self,
+        task_id: str,
+        agent_name: str,
+        payload: dict[str, Any],
+    ) -> TaskResult:
+        """Submit a task and block until the result is ready.
+
+        Args:
+            task_id:    Unique identifier for tracking the task.
+            agent_name: The agent to invoke on the remote worker.
+            payload:    Input payload for the agent.
+
+        Returns:
+            Completed :class:`TaskResult`.
+        """
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Return ``True`` if the remote endpoint is reachable."""
+
+    @abstractmethod
+    async def get_metrics(self) -> dict[str, Any]:
+        """Return a snapshot of the remote worker's load metrics."""
+
+
+# ---------------------------------------------------------------------------
+# HTTP worker transport (client side)
+# ---------------------------------------------------------------------------
+
+
+class HttpWorkerTransport(WorkerTransport):
+    """Submit tasks to a remote HTTP worker node.
+
+    The remote node must expose a :class:`~replicate_mcp.worker_server.WorkerHttpApp`
+    ASGI application (or any HTTP service with compatible endpoints):
+
+    * ``POST /execute`` — run a task, return :class:`TaskResult` JSON.
+    * ``GET  /health``  — return ``{"status": "healthy"}`` with HTTP 200.
+    * ``GET  /metrics`` — return load metrics JSON.
+
+    Args:
+        base_url: HTTP base URL of the remote worker (e.g. ``"http://host:7999"``).
+        timeout:  Per-request timeout in seconds (default: 120 s).
+
+    Example::
+
+        transport = HttpWorkerTransport("http://gpu-node-1:7999", timeout=60)
+        node = RemoteWorkerNode("gpu-node-1", transport=transport)
+    """
+
+    def __init__(self, base_url: str, *, timeout: float = 120.0) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    @property
+    def base_url(self) -> str:
+        """The HTTP base URL of the remote worker."""
+        return self._base_url
+
+    async def submit(
+        self,
+        task_id: str,
+        agent_name: str,
+        payload: dict[str, Any],
+    ) -> TaskResult:
+        """POST the task to ``/execute`` and return the deserialized result."""
+        try:
+            import httpx  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "httpx is required for HTTP worker transport. "
+                "Install it with: pip install httpx"
+            ) from exc
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._base_url}/execute",
+                json={
+                    "task_id": task_id,
+                    "agent_name": agent_name,
+                    "payload": payload,
+                },
+            )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+
+        return TaskResult(
+            task_id=data.get("task_id", task_id),
+            agent_name=data.get("agent_name", agent_name),
+            node_id=data.get("node_id", self._base_url),
+            chunks=data.get("chunks", []),
+            status=TaskStatus(data.get("status", TaskStatus.DONE.value)),
+            error=data.get("error"),
+            elapsed_ms=data.get("elapsed_ms", 0.0),
+        )
+
+    async def health_check(self) -> bool:
+        """GET ``/health`` and return ``True`` if the server responds OK."""
+        try:
+            import httpx  # noqa: PLC0415
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self._base_url}/health")
+                return response.status_code == 200
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def get_metrics(self) -> dict[str, Any]:
+        """GET ``/metrics`` and return the parsed JSON body."""
+        try:
+            import httpx  # noqa: PLC0415
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self._base_url}/metrics")
+                return dict(response.json())
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def __repr__(self) -> str:
+        return f"HttpWorkerTransport(base_url={self._base_url!r}, timeout={self._timeout}s)"
+
+
+# ---------------------------------------------------------------------------
+# Remote worker node
+# ---------------------------------------------------------------------------
+
+
+class RemoteWorkerNode:
+    """A worker node that delegates task execution to a remote HTTP endpoint.
+
+    Unlike :class:`WorkerNode` (which runs tasks in-process), ``RemoteWorkerNode``
+    submits tasks via a :class:`WorkerTransport` and tracks only the
+    in-flight request count for load estimation.
+
+    Args:
+        node_id:   Unique identifier for this remote node.
+        transport: :class:`WorkerTransport` implementation to use.
+        concurrency: Estimated capacity (used for load reporting only;
+                     actual throttling is done server-side).
+
+    Example::
+
+        transport = HttpWorkerTransport("http://gpu-node-1:7999")
+        node = RemoteWorkerNode("gpu-node-1", transport=transport)
+
+        async with DistributedExecutor() as executor:
+            executor.add_remote_node(node)
+            result = await (await executor.submit("llama_chat", {"prompt": "hi"}))
+    """
+
+    def __init__(
+        self,
+        node_id: str,
+        *,
+        transport: WorkerTransport,
+        concurrency: int = 8,
+    ) -> None:
+        self._node_id = node_id
+        self._transport = transport
+        self._concurrency = concurrency
+        self._health: NodeHealth = NodeHealth.HEALTHY
+        self._active_tasks: int = 0
+        self._total_processed: int = 0
+
+    @property
+    def node_id(self) -> str:
+        return self._node_id
+
+    @property
+    def health(self) -> NodeHealth:
+        return self._health
+
+    @property
+    def transport(self) -> WorkerTransport:
+        """The underlying :class:`WorkerTransport`."""
+        return self._transport
+
+    @property
+    def load(self) -> float:
+        """In-flight request count (used for least-loaded routing)."""
+        return float(self._active_tasks)
+
+    @property
+    def queue_depth(self) -> int:
+        """Remote nodes report 0 local queue depth (queuing is server-side)."""
+        return 0
+
+    @property
+    def active_tasks(self) -> int:
+        return self._active_tasks
+
+    @property
+    def total_processed(self) -> int:
+        return self._total_processed
+
+    def mark_unhealthy(self) -> None:
+        self._health = NodeHealth.UNHEALTHY
+        logger.warning("Remote node %r marked unhealthy", self._node_id)
+
+    def mark_healthy(self) -> None:
+        self._health = NodeHealth.HEALTHY
+        logger.info("Remote node %r marked healthy", self._node_id)
+
+    async def ping(self) -> bool:
+        """Check reachability via the transport's health endpoint.
+
+        Returns ``True`` if the remote node is reachable and healthy.
+        Updates :attr:`health` accordingly.
+        """
+        ok = await self._transport.health_check()
+        if ok:
+            self.mark_healthy()
+        else:
+            self.mark_unhealthy()
+        return ok
+
+    async def submit(
+        self,
+        task_id: str,
+        agent_name: str,
+        payload: dict[str, Any],
+        handle: TaskHandle,
+    ) -> None:
+        """Dispatch a task via the transport and resolve *handle* with the result.
+
+        This method creates an asyncio task so the call returns immediately.
+        """
+        asyncio.create_task(
+            self._dispatch(task_id, agent_name, payload, handle),
+            name=f"remote-{self._node_id}-{task_id[:8]}",
+        )
+
+    async def _dispatch(
+        self,
+        task_id: str,
+        agent_name: str,
+        payload: dict[str, Any],
+        handle: TaskHandle,
+    ) -> None:
+        self._active_tasks += 1
+        try:
+            result = await self._transport.submit(task_id, agent_name, payload)
+            handle.set_result(result)
+            self._total_processed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Remote dispatch failed for task %s on node %r: %s",
+                task_id[:8], self._node_id, exc,
+            )
+            error_result = TaskResult(
+                task_id=task_id,
+                agent_name=agent_name,
+                node_id=self._node_id,
+                status=TaskStatus.FAILED,
+                error=str(exc),
+            )
+            handle.set_result(error_result)
+        finally:
+            self._active_tasks -= 1
+
+    def __repr__(self) -> str:
+        return (
+            f"RemoteWorkerNode(id={self._node_id!r}, "
+            f"transport={self._transport!r}, "
+            f"health={self._health.value})"
+        )
+
+
 __all__ = [
     "NodeHealth",
     "NodeOverloadError",
@@ -571,4 +906,7 @@ __all__ = [
     "TaskStatus",
     "WorkerNode",
     "DistributedExecutor",
+    "WorkerTransport",
+    "HttpWorkerTransport",
+    "RemoteWorkerNode",
 ]

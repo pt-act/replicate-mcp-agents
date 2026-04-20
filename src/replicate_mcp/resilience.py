@@ -131,22 +131,39 @@ class CircuitBreaker:
 
     # ---- public API ----
 
+    def _maybe_recover(self) -> None:
+        """Trigger OPEN → HALF_OPEN if the recovery timeout has elapsed.
+
+        This is a *side-effectful mutation* intentionally kept out of the
+        ``state`` property so that property reads are always idempotent.
+        It is called by :meth:`can_execute` and :meth:`pre_call` before
+        they inspect the current state.
+        """
+        if (
+            self._state is CircuitState.OPEN
+            and self._opened_at is not None
+            and time.monotonic() - self._opened_at >= self.config.recovery_timeout
+        ):
+            self._state = CircuitState.HALF_OPEN
+            self._half_open_calls = 0
+            self._success_count = 0
+
     @property
     def state(self) -> CircuitState:
-        """Return the current state, transitioning OPEN → HALF_OPEN if due."""
-        if self._state is CircuitState.OPEN:
-            if (
-                self._opened_at is not None
-                and time.monotonic() - self._opened_at >= self.config.recovery_timeout
-            ):
-                self._state = CircuitState.HALF_OPEN
-                self._half_open_calls = 0
-                self._success_count = 0
+        """Return the current state (pure read — no side effects).
+
+        To trigger the timed OPEN → HALF_OPEN recovery, call
+        :meth:`can_execute` or :meth:`pre_call` instead.
+        """
         return self._state
 
     def can_execute(self) -> bool:
-        """Return ``True`` if a call may proceed under the current state."""
-        s = self.state
+        """Return ``True`` if a call may proceed under the current state.
+
+        Checks for a pending OPEN → HALF_OPEN recovery before evaluating.
+        """
+        self._maybe_recover()
+        s = self._state
         if s is CircuitState.CLOSED:
             return True
         if s is CircuitState.HALF_OPEN:
@@ -156,8 +173,10 @@ class CircuitBreaker:
     def pre_call(self) -> None:
         """Assert that a call is allowed; raise :class:`CircuitOpenError` if not.
 
-        Also increments the HALF-OPEN probe counter.
+        Checks for a pending recovery, then increments the HALF-OPEN probe
+        counter if the state is HALF_OPEN.
         """
+        self._maybe_recover()
         if not self.can_execute():
             retry_in: float | None = None
             if self._opened_at is not None:
@@ -165,7 +184,7 @@ class CircuitBreaker:
                 retry_in = max(0, self.config.recovery_timeout - elapsed)
             raise CircuitOpenError(self.name, retry_in=retry_in)
 
-        if self.state is CircuitState.HALF_OPEN:
+        if self._state is CircuitState.HALF_OPEN:
             self._half_open_calls += 1
 
     def record_success(self) -> None:
@@ -383,7 +402,6 @@ __all__ = [
     "CircuitBreakerConfig",
     "CircuitBreaker",
     "CircuitOpenError",
-    "RetryConfig",
     "RetryConfig",
     "MaxRetriesExceededError",
     "compute_retry_delay",

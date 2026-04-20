@@ -58,6 +58,9 @@ from replicate_mcp.exceptions import ReplicateMCPError
 # Module-level default registry used by the @agent decorator.
 _default_registry: AgentRegistry = AgentRegistry()
 
+# Module-level workflow registry used by register_workflow() and the CLI.
+_workflow_registry: dict[str, WorkflowSpec] = {}
+
 
 def get_default_registry() -> AgentRegistry:
     """Return the module-level default :class:`AgentRegistry`.
@@ -69,12 +72,49 @@ def get_default_registry() -> AgentRegistry:
 
 
 def reset_default_registry() -> None:
-    """Clear the default registry.
+    """Clear the default agent registry.
 
     Useful in tests where each test case needs a clean slate.
     """
     global _default_registry  # noqa: PLW0603
     _default_registry = AgentRegistry()
+
+
+def register_workflow(spec: WorkflowSpec) -> WorkflowSpec:
+    """Register a :class:`WorkflowSpec` in the module-level workflow registry.
+
+    The workflow can then be executed by name via the CLI
+    ``workflows run <name>`` command.
+
+    Args:
+        spec: The :class:`WorkflowSpec` to register.
+
+    Returns:
+        The registered spec (allows chaining).
+
+    Example::
+
+        wf = (
+            WorkflowBuilder("research")
+            .then("searcher")
+            .then("analyst")
+            .build()
+        )
+        register_workflow(wf)
+        # Now available as: replicate-agent workflows run research
+    """
+    _workflow_registry[spec.name] = spec
+    return spec
+
+
+def get_workflow(name: str) -> WorkflowSpec | None:
+    """Return the registered :class:`WorkflowSpec` for *name*, or ``None``."""
+    return _workflow_registry.get(name)
+
+
+def list_workflows() -> dict[str, WorkflowSpec]:
+    """Return a snapshot of the module-level workflow registry."""
+    return dict(_workflow_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +461,9 @@ __all__ = [
     "agent",
     "get_default_registry",
     "reset_default_registry",
+    "register_workflow",
+    "get_workflow",
+    "list_workflows",
     "AgentBuilder",
     "WorkflowBuilder",
     "WorkflowSpec",

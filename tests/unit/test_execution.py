@@ -137,3 +137,55 @@ class TestAgentExecutor:
     def test_catalogue_property(self) -> None:
         executor = AgentExecutor()
         assert isinstance(executor.catalogue, ModelCatalogue)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — ModelDiscovery integration
+# ---------------------------------------------------------------------------
+
+
+class TestModelDiscoveryIntegration:
+    def _make_executor_with_discovery(self) -> AgentExecutor:
+        """Build an AgentExecutor backed by a pre-populated ModelDiscovery."""
+        from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry  # noqa: PLC0415
+        from replicate_mcp.discovery import DiscoveryConfig, ModelDiscovery  # noqa: PLC0415
+
+        registry = AgentRegistry()
+        registry.register(
+            AgentMetadata(
+                safe_name="flux_xl",
+                description="Flux XL",
+                model="black-forest-labs/flux-xl",
+            )
+        )
+        config = DiscoveryConfig(max_models=10)
+        discovery = ModelDiscovery(registry=registry, config=config)
+        return AgentExecutor(discovery=discovery)
+
+    def test_resolve_model_from_discovery_by_safe_name(self) -> None:
+        executor = self._make_executor_with_discovery()
+        model = executor.resolve_model("flux_xl")
+        assert model == "black-forest-labs/flux-xl"
+
+    def test_resolve_model_from_discovery_by_suffix(self) -> None:
+        executor = self._make_executor_with_discovery()
+        # "flux-xl" is the name part of "black-forest-labs/flux-xl"
+        model = executor.resolve_model("flux-xl")
+        assert model == "black-forest-labs/flux-xl"
+
+    def test_discovery_property(self) -> None:
+        from replicate_mcp.agents.registry import AgentRegistry  # noqa: PLC0415
+        from replicate_mcp.discovery import ModelDiscovery  # noqa: PLC0415
+
+        discovery = ModelDiscovery(registry=AgentRegistry())
+        executor = AgentExecutor(discovery=discovery)
+        assert executor.discovery is discovery
+
+    def test_discovery_none_by_default(self) -> None:
+        executor = AgentExecutor()
+        assert executor.discovery is None
+
+    def test_resolve_unknown_model_raises(self) -> None:
+        executor = self._make_executor_with_discovery()
+        with pytest.raises(Exception):  # noqa: B017
+            executor.resolve_model("does_not_exist")
