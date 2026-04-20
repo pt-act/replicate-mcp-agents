@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from replicate_mcp.exceptions import ReplicateMCPError
 
@@ -154,7 +154,7 @@ def sanitize_otel_attributes(
         A sanitised copy of *attributes*.
     """
     masker = masker or SecretMasker()
-    return masker.sanitize(attributes)
+    return cast(dict[str, Any], masker.sanitize(attributes))
 
 
 # ---------------------------------------------------------------------------
@@ -202,11 +202,11 @@ class SecretManager:
 
         # 2. System keyring (optional dep)
         try:
-            import keyring  # type: ignore[import-untyped]
+            import keyring  # type: ignore[import-untyped,import-not-found]
 
             kr_value = keyring.get_password(self.keyring_service, env_var)
             if kr_value:
-                return kr_value.strip()
+                return str(kr_value).strip()
         except Exception:  # noqa: BLE001, S110
             pass  # keyring not installed or not configured
 

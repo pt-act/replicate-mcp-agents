@@ -261,11 +261,11 @@ def compute_retry_delay(attempt: int, config: RetryConfig) -> float:
         attempt: The current attempt index (0 = first retry).
         config:  :class:`RetryConfig` with base/max/jitter tuning.
     """
-    base = config.base_delay * (2 ** attempt)
-    delay = min(base, config.max_delay)
-    jitter_range = config.jitter_factor * delay
-    jitter = random.uniform(-jitter_range, jitter_range)  # noqa: S311
-    return max(0.0, delay + jitter)
+    base: float = config.base_delay * (2 ** attempt)
+    delay: float = min(base, config.max_delay)
+    jitter_range: float = config.jitter_factor * delay
+    jitter: float = random.uniform(-jitter_range, jitter_range)  # noqa: S311
+    return float(max(0.0, delay + jitter))
 
 
 # ---------------------------------------------------------------------------

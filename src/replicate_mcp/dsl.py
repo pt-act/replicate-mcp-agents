@@ -63,7 +63,9 @@ class UnsafeExpressionError(ReplicateMCPError):
     def __init__(self, reason: str, node: ast.AST | None = None) -> None:
         location = ""
         if node is not None and hasattr(node, "lineno"):
-            location = f" (line {node.lineno}, col {node.col_offset})"
+            lineno = getattr(node, "lineno", "?")
+            col = getattr(node, "col_offset", "?")
+            location = f" (line {lineno}, col {col})"
         super().__init__(f"Unsafe expression{location}: {reason}")
         self.reason = reason
 

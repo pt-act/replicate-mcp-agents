@@ -104,14 +104,14 @@ class ModelCatalogue:
         try:
             import replicate as _replicate  # noqa: S603
 
-            client = _replicate.Client(api_token=api_token)
+            client = _replicate.Client(bearer_token=api_token)
             # client.models.list() returns a paginated iterator
             count = 0
             for model in client.models.list():
                 key = f"{model.owner}/{model.name}"
                 self._models[key] = ModelInfo(
-                    owner=model.owner,
-                    name=model.name,
+                    owner=model.owner or "",
+                    name=model.name or "",
                     description=getattr(model, "description", "") or "",
                 )
                 count += 1

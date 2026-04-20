@@ -14,7 +14,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -299,12 +299,12 @@ def _load_payload(raw: str | None) -> dict[str, Any]:
     path = Path(raw)
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            return cast(dict[str, Any], json.loads(path.read_text()))
         except json.JSONDecodeError as exc:
             err_console.print(f"[bold red]✗ Invalid JSON in file {path}:[/bold red] {exc}")
             sys.exit(1)
     try:
-        return json.loads(raw)
+        return cast(dict[str, Any], json.loads(raw))
     except json.JSONDecodeError as exc:
         err_console.print(f"[bold red]✗ Invalid JSON input:[/bold red] {exc}")
         sys.exit(1)

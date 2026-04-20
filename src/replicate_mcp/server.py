@@ -20,7 +20,6 @@ import logging
 import os
 from typing import Any
 
-from replicate_mcp import __version__
 from replicate_mcp.agents.execution import AgentExecutor
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
 from replicate_mcp.observability import default_observability
@@ -111,16 +110,13 @@ def _build_server() -> Any:
 
     from mcp.server.fastmcp import FastMCP  # type: ignore[import-untyped]
 
-    mcp = FastMCP(
-        "Replicate Agent Server",
-        version=__version__,
-    )
+    mcp = FastMCP("Replicate Agent Server")
 
     # --- dynamically register every agent as an MCP tool ----------------
 
     for _name, meta in _registry.list_agents().items():
 
-        def _make_handler(agent_meta: AgentMetadata):  # noqa: ANN202
+        def _make_handler(agent_meta: AgentMetadata) -> Any:
             async def _handler(**kwargs: Any) -> str:  # type: ignore[override]
                 token = os.environ.get("REPLICATE_API_TOKEN", "")
                 if not token:

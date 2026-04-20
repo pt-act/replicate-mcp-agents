@@ -116,3 +116,11 @@ ignore_missing_imports = true
 module = "mcp.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "opentelemetry.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "keyring"
+ignore_missing_imports = true
+
