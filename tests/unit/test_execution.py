@@ -9,9 +9,9 @@ from replicate_mcp.agents.execution import (
     DEFAULT_MODEL_MAP,
     ModelCatalogue,
     ModelInfo,
-    _decorrelated_jitter,
 )
 from replicate_mcp.exceptions import ModelNotFoundError
+from replicate_mcp.resilience import RetryConfig, compute_retry_delay
 
 
 # -----------------------------------------------------------------------
@@ -69,23 +69,26 @@ class TestModelCatalogue:
 
 
 # -----------------------------------------------------------------------
-# _decorrelated_jitter
+# compute_retry_delay (was _decorrelated_jitter)
 # -----------------------------------------------------------------------
 
 
 class TestDecorrelatedJitter:
     def test_returns_non_negative(self) -> None:
+        cfg = RetryConfig(base_delay=0.5, max_delay=30.0)
         for attempt in range(10):
-            val = _decorrelated_jitter(attempt=attempt)
+            val = compute_retry_delay(attempt, cfg)
             assert val >= 0
 
     def test_bounded_by_cap(self) -> None:
+        cfg = RetryConfig(base_delay=1.0, max_delay=5.0, jitter_factor=0.0)
         for _ in range(50):
-            val = _decorrelated_jitter(base=1.0, cap=5.0, attempt=100)
+            val = compute_retry_delay(100, cfg)
             assert val <= 5.0
 
     def test_zero_base(self) -> None:
-        val = _decorrelated_jitter(base=0.0, cap=10.0, attempt=5)
+        cfg = RetryConfig(base_delay=0.0, max_delay=10.0, jitter_factor=0.0)
+        val = compute_retry_delay(5, cfg)
         assert val == 0.0
 
 

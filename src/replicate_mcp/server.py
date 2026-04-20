@@ -3,6 +3,14 @@
 This module wires the Replicate agent registry to the Model Context
 Protocol so that every registered model appears as an MCP tool in
 clients such as Claude Desktop or Cursor.
+
+Phase 2 additions:
+    - :class:`~replicate_mcp.routing.CostAwareRouter` selects the best
+      model when multiple candidates are registered.
+    - :class:`~replicate_mcp.validation.AgentMetadataModel` validates
+      every agent registration.
+    - :class:`~replicate_mcp.observability.Observability` is initialised
+      so OTEL spans/metrics flow from every tool invocation.
 """
 
 from __future__ import annotations
@@ -15,6 +23,8 @@ from typing import Any
 from replicate_mcp import __version__
 from replicate_mcp.agents.execution import AgentExecutor
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
+from replicate_mcp.observability import default_observability
+from replicate_mcp.routing import CostAwareRouter
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +33,19 @@ logger = logging.getLogger(__name__)
 # tools available for demonstration purposes.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Phase 2: Initialise observability and routing at server bootstrap
+# ---------------------------------------------------------------------------
+
+# Observability — set up lazily so import side-effects are minimal.
+# Call default_observability.setup() here; it no-ops if OTEL SDK absent.
+default_observability.setup()
+
+# Cost-aware router — used by the server to select among tagged aliases.
+_router = CostAwareRouter(strategy="thompson")
+
 _registry = AgentRegistry()
-_executor = AgentExecutor()
+_executor = AgentExecutor(observability=default_observability)
 
 _DEFAULT_AGENTS: list[AgentMetadata] = [
     AgentMetadata(
@@ -72,6 +93,12 @@ _DEFAULT_AGENTS: list[AgentMetadata] = [
 
 for _agent in _DEFAULT_AGENTS:
     _registry.register(_agent)
+    # Register with the cost-aware router so routing stats accumulate over time
+    _router.register_model(
+        _agent.replicate_model(),
+        initial_cost=_agent.estimated_cost or 0.01,
+        initial_latency_ms=float(_agent.avg_latency_ms or 5000),
+    )
 
 
 def _build_server() -> Any:
@@ -120,6 +147,7 @@ def _build_server() -> Any:
     def _list_models() -> str:
         """List all available Replicate agent models."""
         agents = _registry.list_agents()
+        routing_stats = _router.stats()
         return json.dumps(
             {
                 name: {
@@ -127,9 +155,27 @@ def _build_server() -> Any:
                     "model": a.replicate_model(),
                     "streaming": a.supports_streaming,
                     "tags": a.tags,
+                    "routing": (
+                        {
+                            "ema_cost_usd": routing_stats[a.replicate_model()].ema_cost_usd,
+                            "ema_latency_ms": routing_stats[a.replicate_model()].ema_latency_ms,
+                            "success_rate": routing_stats[a.replicate_model()].success_rate,
+                            "invocations": routing_stats[a.replicate_model()].invocation_count,
+                        }
+                        if a.replicate_model() in routing_stats
+                        else {}
+                    ),
                 }
                 for name, a in agents.items()
             },
+            indent=2,
+        )
+
+    @mcp.resource("routing://leaderboard")
+    def _routing_leaderboard() -> str:
+        """Show model cost leaderboard from the cost-aware router."""
+        return json.dumps(
+            [{"model": m, "ema_cost_usd": c} for m, c in _router.leaderboard()],
             indent=2,
         )
 
@@ -147,4 +193,4 @@ def serve() -> None:
     mcp.run(transport="stdio")
 
 
-__all__ = ["serve", "_registry", "_executor"]
+__all__ = ["serve", "_registry", "_executor", "_router"]

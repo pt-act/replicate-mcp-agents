@@ -78,7 +78,7 @@ def detect_cycle(
         - BLACK (2) — fully explored
     """
 
-    WHITE, GREY, BLACK = 0, 1, 2
+    WHITE, GREY, BLACK = 0, 1, 2  # noqa: N806
     colour: dict[str, int] = {n: WHITE for n in nodes}
     parent: dict[str, str | None] = {n: None for n in nodes}
 

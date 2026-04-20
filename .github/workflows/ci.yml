@@ -30,6 +30,6 @@ jobs:
       - name: Type check with mypy
         run: poetry run mypy src/
       - name: Run tests with coverage
-        run: poetry run pytest --cov-fail-under=75
+        run: poetry run pytest --cov-fail-under=85
         env:
           REPLICATE_API_TOKEN: ""  # tests use mocked API calls

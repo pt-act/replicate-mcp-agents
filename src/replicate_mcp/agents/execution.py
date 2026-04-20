@@ -3,9 +3,12 @@
 Provides :class:`AgentExecutor` which invokes Replicate models and
 streams results back as an async iterator.
 
-Features:
+Features (Phase 2 hardened):
     - Concurrency limiter (semaphore) to cap parallel calls
-    - Automatic retry with decorrelated jitter backoff
+    - :class:`~replicate_mcp.resilience.CircuitBreaker` per model
+    - :class:`~replicate_mcp.resilience.RetryConfig` exponential back-off
+    - :class:`~replicate_mcp.ratelimit.TokenBucket` rate limiting
+    - :class:`~replicate_mcp.observability.Observability` OTEL traces+metrics
     - Model catalogue hydration from the Replicate API
     - Streaming and non-streaming output paths
 """
@@ -14,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -25,7 +27,15 @@ import anyio
 from replicate_mcp.exceptions import (
     ExecutionError,
     ModelNotFoundError,
-    TokenNotSetError,
+)
+from replicate_mcp.observability import Observability, default_observability
+from replicate_mcp.ratelimit import TokenBucket
+from replicate_mcp.resilience import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitOpenError,
+    RetryConfig,
+    compute_retry_delay,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,24 +125,6 @@ class ModelCatalogue:
 
 
 # ---------------------------------------------------------------------------
-# Retry helpers
-# ---------------------------------------------------------------------------
-
-
-def _decorrelated_jitter(
-    base: float = 0.5,
-    cap: float = 30.0,
-    attempt: int = 0,
-) -> float:
-    """Decorrelated jitter backoff.
-
-    Returns a sleep duration in seconds.
-    """
-    sleep = min(cap, base * (2 ** attempt))
-    return random.uniform(0, sleep)  # noqa: S311
-
-
-# ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
 
@@ -140,9 +132,15 @@ def _decorrelated_jitter(
 class AgentExecutor:
     """Execute Replicate model calls with streaming, concurrency, and retry.
 
+    Phase 2 hardening wires in:
+    - :class:`~replicate_mcp.resilience.CircuitBreaker` per model
+    - :class:`~replicate_mcp.resilience.RetryConfig` exponential back-off
+    - :class:`~replicate_mcp.ratelimit.TokenBucket` rate limiting
+    - :class:`~replicate_mcp.observability.Observability` OTEL traces+metrics
+
     Usage::
 
-        executor = AgentExecutor(max_concurrency=5, max_retries=3)
+        executor = AgentExecutor(max_concurrency=5)
         async for chunk in executor.run("llama3_chat", {"prompt": "Hi"}):
             print(chunk)
     """
@@ -156,17 +154,36 @@ class AgentExecutor:
         max_retries: int = 2,
         retry_base: float = 0.5,
         catalogue: ModelCatalogue | None = None,
+        # Phase 2 additions
+        circuit_breaker_config: CircuitBreakerConfig | None = None,
+        rate_limiter: TokenBucket | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._model_map = model_map or dict(DEFAULT_MODEL_MAP)
         self._api_token = api_token or os.environ.get("REPLICATE_API_TOKEN", "")
         self._semaphore = anyio.Semaphore(max_concurrency)
-        self._max_retries = max_retries
-        self._retry_base = retry_base
+        self._retry_config = RetryConfig(
+            max_retries=max_retries,
+            base_delay=retry_base,
+        )
         self._catalogue = catalogue or ModelCatalogue()
+        # Phase 2: per-model circuit breakers, shared rate limiter, OTEL
+        self._cb_config = circuit_breaker_config or CircuitBreakerConfig()
+        self._breakers: dict[str, CircuitBreaker] = {}
+        self._rate_limiter = rate_limiter  # may be None (no rate limit)
+        self._obs = observability or default_observability
 
     @property
     def catalogue(self) -> ModelCatalogue:
         return self._catalogue
+
+    def circuit_breaker(self, model_id: str) -> CircuitBreaker:
+        """Return (creating if necessary) the circuit breaker for *model_id*."""
+        if model_id not in self._breakers:
+            self._breakers[model_id] = CircuitBreaker(
+                name=model_id, config=self._cb_config
+            )
+        return self._breakers[model_id]
 
     def resolve_model(self, agent_id: str) -> str:
         """Map a short agent name to a full Replicate model identifier.
@@ -194,13 +211,13 @@ class AgentExecutor:
     ) -> AsyncIterator[dict[str, Any]]:
         """Invoke a Replicate model and yield result chunks.
 
-        Applies a concurrency limiter and retries on transient errors.
+        Applies a concurrency limiter, circuit breaker, rate limiter,
+        and retry logic with exponential back-off + jitter.
 
         Yields:
             Dicts with ``agent``, ``model``, ``chunk``/``output``,
             ``latency_ms``, ``done``, and optionally ``error``.
         """
-
         if not self._api_token:
             yield {
                 "agent": agent_id,
@@ -210,39 +227,77 @@ class AgentExecutor:
             return
 
         model_id = self.resolve_model(agent_id)
+        breaker = self.circuit_breaker(model_id)
         last_error: Exception | None = None
+        start = time.monotonic()
 
-        for attempt in range(self._max_retries + 1):
-            start = time.monotonic()
-            try:
-                async with self._semaphore:
-                    async for chunk in self._invoke(agent_id, model_id, payload, start):
-                        yield chunk
-                return  # success
+        with self._obs.span(
+            "agent.run",
+            **{"agent.id": agent_id, "model.id": model_id},
+        ):
+            for attempt in range(self._retry_config.max_retries + 1):
+                start = time.monotonic()
+                try:
+                    # Rate limit before each attempt
+                    if self._rate_limiter is not None:
+                        await self._rate_limiter.acquire()
 
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                if attempt < self._max_retries:
-                    delay = _decorrelated_jitter(self._retry_base, 30.0, attempt)
-                    logger.warning(
-                        "Retry %d/%d for %s after %.1fs: %s",
-                        attempt + 1,
-                        self._max_retries,
-                        model_id,
-                        delay,
-                        exc,
+                    # Circuit breaker check
+                    breaker.pre_call()
+
+                    async with self._semaphore:
+                        async for chunk in self._invoke(agent_id, model_id, payload, start):
+                            yield chunk
+
+                    # Success — update breaker + record telemetry
+                    breaker.record_success()
+                    elapsed_ms = (time.monotonic() - start) * 1000
+                    self._obs.record_invocation(
+                        model_id, elapsed_ms, 0.0, success=True
                     )
-                    await anyio.sleep(delay)
+                    return
 
-        # All retries exhausted
-        elapsed_ms = 0.0
-        yield {
-            "agent": agent_id,
-            "model": model_id,
-            "error": f"{type(last_error).__name__}: {last_error}",
-            "latency_ms": round(elapsed_ms, 1),
-            "done": True,
-        }
+                except CircuitOpenError:
+                    self._obs.record_circuit_trip(model_id)
+                    elapsed_ms = (time.monotonic() - start) * 1000
+                    yield {
+                        "agent": agent_id,
+                        "model": model_id,
+                        "error": f"Circuit open for '{model_id}' — service unavailable",
+                        "latency_ms": round(elapsed_ms, 1),
+                        "done": True,
+                    }
+                    return
+
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    breaker.record_failure()
+                    elapsed_ms = (time.monotonic() - start) * 1000
+                    self._obs.record_invocation(
+                        model_id, elapsed_ms, 0.0, success=False
+                    )
+
+                    if attempt < self._retry_config.max_retries:
+                        delay = compute_retry_delay(attempt, self._retry_config)
+                        logger.warning(
+                            "Retry %d/%d for %s after %.1fs: %s",
+                            attempt + 1,
+                            self._retry_config.max_retries,
+                            model_id,
+                            delay,
+                            exc,
+                        )
+                        await anyio.sleep(delay)
+
+            # All retries exhausted
+            elapsed_ms = (time.monotonic() - start) * 1000
+            yield {
+                "agent": agent_id,
+                "model": model_id,
+                "error": f"{type(last_error).__name__}: {last_error}",
+                "latency_ms": round(elapsed_ms, 1),
+                "done": True,
+            }
 
     async def _invoke(
         self,
@@ -258,7 +313,7 @@ class AgentExecutor:
         try:
             output = replicate.run(model_id, input=payload)
 
-            if hasattr(output, "__iter__") and not isinstance(output, (str, bytes)):
+            if hasattr(output, "__iter__") and not isinstance(output, str | bytes):
                 collected: list[str] = []
                 for fragment in output:
                     text = str(fragment)
