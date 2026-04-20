@@ -3,6 +3,7 @@
 from .composition import AgentNode, AgentWorkflow, WorkflowEdge
 from .execution import AgentExecutor
 from .registry import AgentMetadata, AgentRegistry
+from .transforms import TransformRegistry, default_registry
 
 __all__ = [
     "AgentMetadata",
@@ -11,4 +12,6 @@ __all__ = [
     "WorkflowEdge",
     "AgentWorkflow",
     "AgentExecutor",
+    "TransformRegistry",
+    "default_registry",
 ]
