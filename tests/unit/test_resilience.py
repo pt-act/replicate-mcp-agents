@@ -78,6 +78,8 @@ class TestCircuitBreakerStates:
         b.record_failure()
         assert b.state is CircuitState.OPEN
         time.sleep(0.02)
+        # Phase 4: state is a pure getter; recovery is triggered by can_execute()
+        b.can_execute()  # triggers _maybe_recover() → HALF_OPEN
         assert b.state is CircuitState.HALF_OPEN
 
     def test_half_open_allows_limited_calls(self) -> None:
@@ -102,7 +104,8 @@ class TestCircuitBreakerStates:
         b = CircuitBreaker("test", cfg)
         b.record_failure()
         time.sleep(0.02)
-        # Now in HALF_OPEN
+        # Phase 4: recovery triggered by can_execute(); state is then a pure read
+        b.can_execute()  # triggers _maybe_recover() → HALF_OPEN
         assert b.state is CircuitState.HALF_OPEN
         b.record_success()
         b.record_success()
@@ -113,6 +116,7 @@ class TestCircuitBreakerStates:
         b = CircuitBreaker("test", cfg)
         b.record_failure()
         time.sleep(0.02)
+        b.can_execute()  # triggers _maybe_recover() → HALF_OPEN
         assert b.state is CircuitState.HALF_OPEN
         b.record_failure()
         assert b.state is CircuitState.OPEN

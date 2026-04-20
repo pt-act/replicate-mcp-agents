@@ -334,3 +334,71 @@ class TestAgentContext:
         with AgentContext() as outer:
             with AgentContext() as inner:
                 assert outer.registry is not inner.registry
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Workflow registry
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowRegistry:
+    def setup_method(self) -> None:
+        """Clear the workflow registry before each test."""
+        from replicate_mcp.sdk import _workflow_registry  # noqa: PLC0415
+
+        _workflow_registry.clear()
+
+    def _make_spec(self, name: str = "test-wf") -> WorkflowSpec:
+        return WorkflowBuilder(name).then("agent-a").build()
+
+    def test_register_returns_spec(self) -> None:
+        from replicate_mcp.sdk import register_workflow  # noqa: PLC0415
+
+        spec = self._make_spec()
+        returned = register_workflow(spec)
+        assert returned is spec
+
+    def test_get_workflow_registered(self) -> None:
+        from replicate_mcp.sdk import get_workflow, register_workflow  # noqa: PLC0415
+
+        spec = self._make_spec("my-wf")
+        register_workflow(spec)
+        assert get_workflow("my-wf") is spec
+
+    def test_get_workflow_not_registered_returns_none(self) -> None:
+        from replicate_mcp.sdk import get_workflow  # noqa: PLC0415
+
+        assert get_workflow("nonexistent") is None
+
+    def test_list_workflows_empty(self) -> None:
+        from replicate_mcp.sdk import list_workflows  # noqa: PLC0415
+
+        assert list_workflows() == {}
+
+    def test_list_workflows_returns_snapshot(self) -> None:
+        from replicate_mcp.sdk import list_workflows, register_workflow  # noqa: PLC0415
+
+        spec_a = self._make_spec("wf-a")
+        spec_b = self._make_spec("wf-b")
+        register_workflow(spec_a)
+        register_workflow(spec_b)
+        snap = list_workflows()
+        assert "wf-a" in snap
+        assert "wf-b" in snap
+
+    def test_list_workflows_is_copy(self) -> None:
+        """Mutations to the returned dict must not affect the registry."""
+        from replicate_mcp.sdk import list_workflows  # noqa: PLC0415
+
+        snap = list_workflows()
+        snap["injected"] = self._make_spec("injected")
+        assert list_workflows().get("injected") is None
+
+    def test_register_overwrites_existing(self) -> None:
+        from replicate_mcp.sdk import get_workflow, register_workflow  # noqa: PLC0415
+
+        spec1 = self._make_spec("dupe")
+        spec2 = WorkflowBuilder("dupe").then("other-agent").build()
+        register_workflow(spec1)
+        register_workflow(spec2)
+        assert get_workflow("dupe") is spec2

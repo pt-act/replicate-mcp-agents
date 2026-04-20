@@ -182,3 +182,52 @@ class TestCostAwareRouterThompson:
         r.register_model("a/model")
         r.register_model("a/model")  # second call should be no-op
         assert "a/model" in r.stats()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — sync_stats() encapsulation fix
+# ---------------------------------------------------------------------------
+
+
+class TestSyncStats:
+    def test_sync_stats_updates_ts_params(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("m/1")
+        r.sync_stats("m/1", ts_alpha=5.0, ts_beta=2.0)
+        s = r.stats()["m/1"]
+        assert s.ts_alpha == 5.0
+        assert s.ts_beta == 2.0
+
+    def test_sync_stats_auto_registers(self) -> None:
+        """sync_stats should auto-register an unknown model."""
+        r = CostAwareRouter()
+        r.sync_stats("new/model", ts_alpha=3.0, ts_beta=7.0)
+        assert "new/model" in r.stats()
+        s = r.stats()["new/model"]
+        assert s.ts_alpha == 3.0
+        assert s.ts_beta == 7.0
+
+    def test_sync_stats_does_not_touch_other_fields(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("m/2", initial_cost=0.005, initial_latency_ms=1000)
+        r.sync_stats("m/2", ts_alpha=9.0, ts_beta=1.0)
+        s = r.stats()["m/2"]
+        assert s.ema_cost_usd == pytest.approx(0.005)
+        assert s.ema_latency_ms == pytest.approx(1000)
+        assert s.ts_alpha == pytest.approx(9.0)
+
+    def test_adaptive_router_uses_sync_stats_not_private_access(self) -> None:
+        """AdaptiveRouter's warm-phase logic must no longer touch _stats directly."""
+        from replicate_mcp.qos import AdaptiveRouter  # noqa: PLC0415
+
+        router = AdaptiveRouter(explore_threshold=0)  # skip UCB1 phase
+        router.register_model("a/m", initial_cost=0.001, initial_latency_ms=500)
+        router.register_model("b/m", initial_cost=0.002, initial_latency_ms=400)
+
+        # Record outcomes so ts_alpha/ts_beta diverge
+        for _ in range(3):
+            router.record_outcome("a/m", latency_ms=500, cost_usd=0.001, success=True)
+
+        # This should not raise AttributeError and should return a valid model
+        chosen = router.select_model(["a/m", "b/m"])
+        assert chosen in ("a/m", "b/m")

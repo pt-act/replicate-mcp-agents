@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from replicate_mcp.distributed import (
     DistributedExecutor,
+    HttpWorkerTransport,
     NodeHealth,
     NodeOverloadError,
     NodeRegistry,
     NoHealthyNodesError,
+    RemoteWorkerNode,
     TaskHandle,
     TaskResult,
     TaskStatus,
     WorkerNode,
+    WorkerTransport,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,8 +97,12 @@ class TestTaskHandle:
         asyncio.get_event_loop().run_until_complete(run())
 
     def test_task_id(self) -> None:
-        handle = TaskHandle("my-task-id")
-        assert handle.task_id == "my-task-id"
+        # TaskHandle requires a running event loop (asyncio.get_running_loop())
+        async def _run() -> None:
+            handle = TaskHandle("my-task-id")
+            assert handle.task_id == "my-task-id"
+
+        asyncio.get_event_loop().run_until_complete(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -429,3 +437,212 @@ class TestErrorTypes:
     def test_no_healthy_nodes_error(self) -> None:
         e = NoHealthyNodesError()
         assert "healthy" in str(e).lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — WorkerTransport / HttpWorkerTransport / RemoteWorkerNode
+# ---------------------------------------------------------------------------
+
+
+class TestWorkerTransport:
+    """WorkerTransport is an ABC — check it cannot be instantiated."""
+
+    def test_is_abstract(self) -> None:
+        assert hasattr(WorkerTransport, "__abstractmethods__")
+
+
+class TestHttpWorkerTransport:
+    def _transport(self) -> HttpWorkerTransport:
+        return HttpWorkerTransport("http://localhost:7999", timeout=5.0)
+
+    def test_base_url_stripped(self) -> None:
+        t = HttpWorkerTransport("http://host:7999/")
+        assert t.base_url == "http://host:7999"
+
+    def test_repr(self) -> None:
+        t = self._transport()
+        assert "HttpWorkerTransport" in repr(t)
+        assert "7999" in repr(t)
+
+    async def test_health_check_ok(self) -> None:
+        t = self._transport()
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            ok = await t.health_check()
+        assert ok is True
+
+    async def test_health_check_fail(self) -> None:
+        t = self._transport()
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(
+                side_effect=ConnectionError("refused")
+            )
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            ok = await t.health_check()
+        assert ok is False
+
+    async def test_get_metrics_returns_dict(self) -> None:
+        t = self._transport()
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value={"active_tasks": 2})
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            metrics = await t.get_metrics()
+        assert metrics.get("active_tasks") == 2
+
+    async def test_get_metrics_on_error_returns_empty(self) -> None:
+        t = self._transport()
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(side_effect=RuntimeError("boom"))
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            metrics = await t.get_metrics()
+        assert metrics == {}
+
+    async def test_submit_deserialises_task_result(self) -> None:
+        t = self._transport()
+        payload = {
+            "task_id": "t1",
+            "agent_name": "my_agent",
+            "node_id": "remote-node",
+            "chunks": [{"done": True}],
+            "status": "done",
+            "error": None,
+            "elapsed_ms": 123.4,
+        }
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value=payload)
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await t.submit("t1", "my_agent", {"prompt": "hi"})
+
+        assert isinstance(result, TaskResult)
+        assert result.task_id == "t1"
+        assert result.status == TaskStatus.DONE
+        assert result.elapsed_ms == pytest.approx(123.4)
+
+
+class TestRemoteWorkerNode:
+    def _make_transport(self, task_result: TaskResult | None = None) -> HttpWorkerTransport:
+        """Return a mocked transport that resolves to task_result."""
+        t = MagicMock(spec=HttpWorkerTransport)
+        t.health_check = AsyncMock(return_value=True)
+        t.get_metrics = AsyncMock(return_value={})
+        t.submit = AsyncMock(
+            return_value=task_result or TaskResult(
+                task_id="t1", agent_name="a", node_id="remote", status=TaskStatus.DONE
+            )
+        )
+        t.__repr__ = MagicMock(return_value="MockTransport()")
+        return t  # type: ignore[return-value]
+
+    def test_properties(self) -> None:
+        t = self._make_transport()
+        node = RemoteWorkerNode("remote-1", transport=t)
+        assert node.node_id == "remote-1"
+        assert node.health == NodeHealth.HEALTHY
+        assert node.queue_depth == 0
+        assert node.load == 0.0
+
+    def test_repr(self) -> None:
+        t = self._make_transport()
+        node = RemoteWorkerNode("remote-1", transport=t)
+        assert "RemoteWorkerNode" in repr(node)
+
+    async def test_ping_sets_healthy(self) -> None:
+        t = self._make_transport()
+        node = RemoteWorkerNode("r", transport=t)
+        ok = await node.ping()
+        assert ok is True
+        assert node.health == NodeHealth.HEALTHY
+
+    async def test_ping_sets_unhealthy_on_failure(self) -> None:
+        t = self._make_transport()
+        t.health_check = AsyncMock(return_value=False)
+        node = RemoteWorkerNode("r", transport=t)
+        ok = await node.ping()
+        assert ok is False
+        assert node.health == NodeHealth.UNHEALTHY
+
+    async def test_submit_resolves_handle(self) -> None:
+        result = TaskResult(task_id="t2", agent_name="a", node_id="r", status=TaskStatus.DONE)
+        t = self._make_transport(result)
+        node = RemoteWorkerNode("r", transport=t)
+
+        async def run() -> None:
+            handle = TaskHandle("t2")
+            await node.submit("t2", "a", {}, handle)
+            # Give the dispatched task time to complete
+            await asyncio.sleep(0.05)
+            resolved = await asyncio.wait_for(handle._future, timeout=1.0)
+            assert resolved.status == TaskStatus.DONE
+
+        await run()
+
+    async def test_submit_resolves_failed_on_exception(self) -> None:
+        t = self._make_transport()
+        t.submit = AsyncMock(side_effect=RuntimeError("network error"))
+        node = RemoteWorkerNode("r", transport=t)
+
+        async def run() -> None:
+            handle = TaskHandle("err-task")
+            await node.submit("err-task", "a", {}, handle)
+            await asyncio.sleep(0.05)
+            result = await asyncio.wait_for(handle._future, timeout=1.0)
+            assert result.status == TaskStatus.FAILED
+            assert "network error" in (result.error or "")
+
+        await run()
+
+
+class TestDistributedExecutorRemoteNodes:
+    async def test_add_remote_node_increases_node_count(self) -> None:
+        t = MagicMock(spec=HttpWorkerTransport)
+        remote = RemoteWorkerNode("remote-1", transport=t)
+
+        async with DistributedExecutor() as executor:
+            assert executor.node_count == 0
+            executor.add_remote_node(remote)
+            assert executor.node_count == 1
+            assert executor.remote_nodes == [remote]
+
+    async def test_remove_remote_node(self) -> None:
+        t = MagicMock(spec=HttpWorkerTransport)
+        remote = RemoteWorkerNode("r1", transport=t)
+
+        async with DistributedExecutor() as executor:
+            executor.add_remote_node(remote)
+            removed = executor.remove_remote_node("r1")
+            assert removed is remote
+            assert executor.node_count == 0
+
+    async def test_submit_routes_to_remote_node(self) -> None:
+        """Submitting to an executor with only remote nodes should dispatch remotely."""
+        ok_result = TaskResult(
+            task_id="t99", agent_name="a", node_id="r", status=TaskStatus.DONE
+        )
+        t = MagicMock(spec=HttpWorkerTransport)
+        t.health_check = AsyncMock(return_value=True)
+        t.submit = AsyncMock(return_value=ok_result)
+        t.__repr__ = MagicMock(return_value="MockTransport()")
+
+        remote = RemoteWorkerNode("r", transport=t)
+
+        async with DistributedExecutor() as executor:
+            executor.add_remote_node(remote)
+            handle = await executor.submit("a", {})
+            # Allow background dispatch to complete
+            await asyncio.sleep(0.1)
+            result = await asyncio.wait_for(handle._future, timeout=2.0)
+        assert result.status == TaskStatus.DONE

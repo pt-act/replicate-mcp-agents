@@ -287,6 +287,32 @@ class CostAwareRouter:
             success=success,
         )
 
+    # ---- state synchronisation ----
+
+    def sync_stats(
+        self,
+        model: str,
+        *,
+        ts_alpha: float,
+        ts_beta: float,
+    ) -> None:
+        """Synchronise Thompson-Sampling posterior parameters for *model*.
+
+        Copies ``ts_alpha`` and ``ts_beta`` from an external source
+        (typically a parent router) without exposing ``_stats`` directly.
+        This allows :class:`~replicate_mcp.qos.AdaptiveRouter` to keep its
+        internal ``CostAwareRouter`` delegate in sync with the parent's Beta
+        posterior without breaking encapsulation.
+
+        Args:
+            model:    Model identifier.  Auto-registered if not yet known.
+            ts_alpha: New value for the Beta distribution's α parameter.
+            ts_beta:  New value for the Beta distribution's β parameter.
+        """
+        stats = self._ensure_registered(model)
+        stats.ts_alpha = ts_alpha
+        stats.ts_beta = ts_beta
+
     # ---- introspection ----
 
     def stats(self) -> dict[str, ModelStats]:

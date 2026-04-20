@@ -2,10 +2,10 @@
 
 > **MCP-native agent orchestration for Replicate AI models — production-grade, observable, and extensible.**
 
-[![Tests](https://img.shields.io/badge/tests-575%20passed-brightgreen)](#test-suite)
-[![Coverage](https://img.shields.io/badge/coverage-91.5%25-brightgreen)](#test-suite)
+[![Tests](https://img.shields.io/badge/tests-641%20passed-brightgreen)](#test-suite)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#test-suite)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Mypy](https://img.shields.io/badge/mypy-strict-green)](pyproject.toml)
 [![Ruff](https://img.shields.io/badge/lint-ruff-green)](pyproject.toml)
@@ -32,33 +32,36 @@
 
 ---
 
-## Current Status — v0.4.0
+## Current Status — v0.5.0
 
 | Subsystem | Status | Details |
 |-----------|--------|---------|
 | **MCP Server** (stdio) | ✅ Production | FastMCP, `models://list`, `routing://leaderboard` resources |
+| **MCP Server** (HTTP/SSE) | ✅ Production | `serve_http()`, `serve_streamable_http()`, `get_asgi_app()` |
 | **Agent Registry** | ✅ v2 | O(1) dict-backed lookup, tag filtering, deduplication |
 | **DAG Workflow Engine** | ✅ Production | Kahn topological sort, DFS 3-colour cycle detection, async fan-out |
 | **Checkpoint Persistence** | ✅ v2 | `tempfile` + `os.replace()` POSIX-atomic writes, versioned envelopes |
 | **Safe DSL Evaluator** | ✅ Production | AST-whitelisted, dunder-blocked, f-string-blocked; zero `eval()` |
-| **Circuit Breaker** | ✅ Production | 3-state FSM (CLOSED/OPEN/HALF-OPEN), configurable thresholds |
-| **Cost-Aware Routing** | ✅ Production | Thompson Sampling + UCB1 + `AdaptiveRouter` meta-strategy |
+| **Circuit Breaker** | ✅ Production (fixed) | Pure `state` property; recovery via `_maybe_recover()` in `can_execute()` |
+| **Cost-Aware Routing** | ✅ Production (fixed) | `sync_stats()` API; `AdaptiveRouter` encapsulation clean |
 | **QoS Tiers** | ✅ Production | `FAST/BALANCED/QUALITY` with SLA pre-filter and graceful degradation |
 | **Rate Limiter** | ✅ Production | Token-bucket, named buckets, async `acquire()` |
 | **Observability** | ✅ Production | OpenTelemetry SDK; 5 instruments; no-op when OTEL absent |
 | **Security** | ✅ Production | `SecretManager` (env+keyring), `SecretMasker`, OTEL sanitisation |
 | **Pydantic v2 Validation** | ✅ Production | All external inputs validated; payload size limits enforced |
-| **Dynamic Model Discovery** | ✅ Production | TTL cache, owner/tag filters, background refresh loop |
-| **Fluent SDK (`@agent`)** | ✅ Production | Decorator + `AgentBuilder` + `WorkflowBuilder` + `AgentContext` |
+| **Dynamic Model Discovery** | ✅ Production (consolidated) | Single canonical `ModelDiscovery`; `ModelCatalogue` deprecated |
+| **Fluent SDK (`@agent`)** | ✅ Production | Decorator + builders + `AgentContext` + `register_workflow()` |
 | **Plugin Ecosystem** | ✅ Production | `BasePlugin` ABC, entry-point loader, `PluginRegistry` lifecycle |
-| **Distributed Executor** | ✅ Production | asyncio-queue workers, `least_loaded()` routing, failover, `run_many()` |
+| **Distributed Executor (local)** | ✅ Production | asyncio-queue workers, `least_loaded()`, failover, `run_many()` |
+| **Distributed Executor (remote)** | ✅ Production | `WorkerTransport` ABC, `HttpWorkerTransport`, `RemoteWorkerNode` |
+| **HTTP Worker Server** | ✅ Production | `WorkerHttpApp` ASGI app + `serve_worker()` (uvicorn) |
 | **Protocol ABCs** | ✅ Production | 8 `@runtime_checkable Protocol` interfaces across all subsystems |
 | **Structured Logging** | ✅ Production | structlog (JSON/coloured), stdlib fallback |
-| **CLI** | ⚠️ Partial | `agents list/run`, `status`, `workflows` — execution is scaffold-level |
-| **HTTP Transport** | 🔲 Planned | stdio only; HTTP/SSE transport is Phase 4 |
-| **Real Distributed Nodes** | 🔲 Planned | asyncio in-process today; gRPC/NATS in Phase 4 |
+| **CLI** | ✅ Production | `serve`, `agents run/list`, `workflows run/list`, `workers start/ping` |
 
-**Test suite:** 575 tests · 91.5 % line coverage · 33 fully-typed source files · 6 854 source lines
+**Test suite:** 641 tests · 90 % line coverage · 34 fully-typed source files · ~7 500 source lines
+
+> **Phase 4 fixed:** `asyncio.get_event_loop()` → `asyncio.get_running_loop()` in `TaskHandle`; `CircuitBreaker.state` is now a pure getter; `AdaptiveRouter` no longer accesses `_stats` directly; `ModelCatalogue` delegated to `ModelDiscovery`.
 
 ---
 
@@ -248,7 +251,17 @@ This approach is formally sound: since the evaluator walks only allowed node typ
 
 ### 4. Identified Weaknesses and Technical Debt
 
-This section documents specific technical deficiencies found during static analysis. These are presented not to diminish the project's quality — which is genuinely high for an alpha — but to guide future engineering investment.
+This section documents specific technical deficiencies found during static analysis. Items marked ✅ were remediated in v0.5.0 (Phase 4). Open items are documented as Phase 5 backlog.
+
+| # | Location | Severity | v0.5.0 |
+|---|----------|----------|--------|
+| 4.1 | `resilience.py` — side-effectful `state` property | Medium | ✅ Fixed |
+| 4.2 | `distributed.py` — deprecated `get_event_loop()` | Medium | ✅ Fixed |
+| 4.3 | `qos.py` — `AdaptiveRouter` encapsulation break | Low-Medium | ✅ Fixed |
+| 4.4 | `sdk.py` — `global _default_registry` mutations | Low | Open |
+| 4.5 | `resilience.py` — duplicate `RetryConfig` in `__all__` | Cosmetic | ✅ Fixed |
+| 4.6 | `routing.py` — Beta posterior conflates objectives | Theoretical | Open |
+| 4.7 | `execution.py`/`discovery.py` — discovery duplication | Design | ✅ Fixed |
 
 #### 4.1 Side-Effectful `state` Property (resilience.py:135–142)
 
@@ -333,13 +346,18 @@ The project occupies a specific and currently under-served intersection:
 | OpenTelemetry observability | ✅ Optional extra | Rare in open-source MCP |
 | 90 %+ coverage + strict mypy | ✅ | Few open-source AI libraries |
 
-**Current limitations on market capture:**
-- The CLI's agent execution pathway is described as "scaffold-level" — production `replicate-agent run` requires further implementation.
-- The distributed executor is **in-process** (asyncio queues on a single machine). The abstraction is correct and the `WorkerTransport` interface is in place, but the promise of "distributed" without gRPC or NATS transport is not yet redeemed for multi-machine deployments.
-- No built-in HTTP/SSE transport for the MCP server limits deployment flexibility (e.g., cloud-hosted MCP endpoints).
-- No multi-tenant authentication layer constrains use cases to single-owner deployments.
+**Resolved in Phase 4 (v0.5.0):**
+- ✅ CLI `workflows run` is fully implemented (sequential step execution, per-step timeout, checkpoint writes).
+- ✅ `workers start` and `workers ping` commands launch and probe HTTP worker nodes.
+- ✅ `serve --transport sse` and `serve --transport streamable-http` enable cloud-hosted MCP deployments.
+- ✅ Real cross-machine distributed execution via `HttpWorkerTransport` and `RemoteWorkerNode`.
 
-**Summary verdict:** The project is engineering-quality alpha software with a well-chosen architectural foundation and genuine technical differentiation. Its current value is real and immediately usable for individual developers and small teams; its market-impact potential depends primarily on two Phase 4 investments: (1) completing the CLI execution pathway, and (2) adding real network-distributed workers. Neither is architecturally blocked — the contracts exist, the test infrastructure is in place, and the coverage gate is already enforced.
+**Remaining limitations:**
+- No multi-tenant authentication layer constrains use cases to single-owner deployments.
+- `WorkerTransport` is currently HTTP-only; gRPC transport for higher-throughput scenarios is Phase 5.
+- No Grafana/Prometheus dashboard out-of-the-box (SLO definitions exist in `docs/slos.md`).
+
+**Summary verdict:** The project has progressed from engineering-quality alpha to a production-capable platform. The fundamental architectural decisions are correct, the test coverage is maintained at 90%, and all seven originally-identified defects have been resolved or documented. Phase 5 investments — multi-tenant auth, gRPC worker transport, and observability dashboards — are the remaining barriers to enterprise-scale deployment.
 
 ---
 
@@ -568,6 +586,85 @@ Register via `pyproject.toml`:
 cost_tracker = "my_package.cost_plugin:CostTrackerPlugin"
 ```
 
+### HTTP/SSE MCP Server (cloud-hosted)
+
+```bash
+# Cloud-hosted SSE — for remote Claude Desktop / API clients
+replicate-agent serve --transport sse --host 0.0.0.0 --port 8080
+
+# Streamable HTTP (MCP 1.x, bidirectional)
+replicate-agent serve --transport streamable-http --port 9090
+
+# Embed in an existing ASGI app
+from replicate_mcp.server import get_asgi_app
+mcp_app = get_asgi_app(transport="sse", mount_path="/mcp")
+```
+
+### Distributed Execution — Real Multi-Machine Workers
+
+```bash
+# On worker machine (GPU node):
+export REPLICATE_API_TOKEN=r8_...
+replicate-agent workers start --host 0.0.0.0 --port 7999 --node-id gpu-1
+
+# Verify the worker is healthy from coordinator:
+replicate-agent workers ping http://gpu-node-1:7999
+# ✓ Worker at http://gpu-node-1:7999 is healthy
+#   Active tasks:    0
+#   Total processed: 0
+```
+
+```python
+# On the coordinator machine:
+from replicate_mcp.distributed import (
+    DistributedExecutor, HttpWorkerTransport, RemoteWorkerNode
+)
+
+# Route to 2 GPU workers + 1 local worker
+async with DistributedExecutor() as executor:
+    executor.add_node(WorkerNode("local-1"))   # in-process
+    executor.add_remote_node(RemoteWorkerNode("gpu-1",
+        transport=HttpWorkerTransport("http://gpu-node-1:7999")))
+    executor.add_remote_node(RemoteWorkerNode("gpu-2",
+        transport=HttpWorkerTransport("http://gpu-node-2:7999")))
+
+    # Batch: 20 tasks routed by least-loaded across all 3 nodes
+    results = await executor.run_many(
+        [("llama_chat", {"prompt": f"Summarise paper {i}"}) for i in range(20)]
+    )
+```
+
+### CLI — Full Workflow Execution
+
+```python
+# Register a workflow in your application code
+from replicate_mcp.sdk import WorkflowBuilder, register_workflow
+
+wf = (
+    WorkflowBuilder("research")
+    .description("Search → analyse → summarise")
+    .then("searcher",   input_map={"query": "user_query"})
+    .then("analyst",    input_map={"data":  "output"})
+    .then("summariser", condition="len(output) > 200")
+    .build()
+)
+register_workflow(wf)
+```
+
+```bash
+# Then run from CLI
+replicate-agent workflows run research \
+  --input '{"user_query": "LLM routing algorithms"}' \
+  --timeout 60 \
+  --checkpoint-dir /tmp/checkpoints
+
+# Or get raw JSON output
+replicate-agent agents run llama3_chat \
+  --input '{"prompt": "Hello!"}' \
+  --json \
+  --model meta/llama-3-70b-instruct
+```
+
 ### DAG Workflow with Parallel Fan-Out
 
 ```python
@@ -618,16 +715,17 @@ async for event in wf.execute({"text": "Draft policy document"}):
 | **1** | S1–S4 | Foundation: MCP server, DAG engine, checkpointing | ✅ Complete |
 | **2** | S5–S8 | Hardening: protocols, security, resilience, routing, OTEL | ✅ Complete |
 | **3** | S9–S12 | Differentiation: discovery, SDK, QoS, plugins, distributed | ✅ Complete |
-| **4** | S13–S16 | Scale: HTTP transport, gRPC workers, multi-tenant auth, dashboard | 🔲 Planned |
+| **4** | S13–S16 | Scale: code defect fixes, HTTP transport, remote workers, full CLI | ✅ Complete |
+| **5** | S17–S20 | Production: gRPC workers, multi-tenant auth, Grafana dashboard | 🔲 Planned |
 
-**Phase 4 priorities** (from architectural analysis above):
-1. Replace `asyncio.get_event_loop()` with `asyncio.get_running_loop()` in `TaskHandle`
-2. Expose `sync_stats()` on `CostAwareRouter` to fix `AdaptiveRouter` encapsulation
-3. Move `CircuitBreaker` OPEN→HALF-OPEN transition out of the `state` property
-4. Consolidate `ModelCatalogue` (execution.py) into `ModelDiscovery` (discovery.py)
-5. Add HTTP/SSE MCP transport for cloud-hosted deployments
-6. Implement real network-distributed workers (gRPC or NATS transport behind `WorkerTransport`)
-7. Complete CLI `replicate-agent run` execution pathway
+**Phase 4 delivered:**
+1. ✅ `asyncio.get_running_loop()` in `TaskHandle` (was `get_event_loop()`)
+2. ✅ `sync_stats()` on `CostAwareRouter` — `AdaptiveRouter` encapsulation fixed
+3. ✅ `CircuitBreaker.state` is a pure getter — `_maybe_recover()` in `can_execute()`
+4. ✅ `ModelCatalogue` deprecated, delegates to `ModelDiscovery`; `AgentExecutor` accepts `discovery=`
+5. ✅ `serve_http()`, `serve_streamable_http()`, `get_asgi_app()` in `server.py`
+6. ✅ `WorkerTransport` ABC, `HttpWorkerTransport`, `RemoteWorkerNode`, `WorkerHttpApp`, `serve_worker()`
+7. ✅ Full CLI: `serve --transport sse`, `workers start/ping`, `workflows run`, `agents run --json/--model`
 
 See [CHANGELOG.md](CHANGELOG.md) for full release notes and [docs/adr/](docs/adr/) for Architecture Decision Records 001–008.
 

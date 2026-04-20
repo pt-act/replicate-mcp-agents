@@ -179,14 +179,115 @@ def _build_server() -> Any:
 
 
 def serve() -> None:
-    """Launch the MCP server over stdio transport.
+    """Launch the MCP server over **stdio** transport (default entrypoint).
 
     This is the entrypoint wired to the ``replicate-mcp-server``
-    console script in ``pyproject.toml``.
+    console script in ``pyproject.toml``.  For HTTP/SSE transports,
+    use :func:`serve_http` or :func:`serve_streamable_http`.
     """
+    mcp_server = _build_server()
+    mcp_server.run(transport="stdio")
 
-    mcp = _build_server()
-    mcp.run(transport="stdio")
+
+def serve_http(
+    *,
+    host: str = "0.0.0.0",  # noqa: S104 — server default binds all interfaces intentionally
+    port: int = 8080,
+    mount_path: str | None = None,
+    log_level: str = "info",
+) -> None:
+    """Launch the MCP server over **SSE** (Server-Sent Events) transport.
+
+    Suitable for cloud-hosted deployments where clients connect over HTTP.
+    Requires ``uvicorn`` to be installed (``pip install uvicorn``).
+
+    Args:
+        host:       Network interface to bind (default: all interfaces).
+        port:       TCP port (default: 8080).
+        mount_path: Optional URL prefix for the SSE endpoint.
+        log_level:  Uvicorn log level (``"debug"``, ``"info"``, etc.).
+
+    Example::
+
+        # python -m replicate_mcp.server --transport sse --port 8080
+        serve_http(host="0.0.0.0", port=8080)
+    """
+    try:
+        import uvicorn  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "uvicorn is required for HTTP transport. "
+            "Install it with: pip install uvicorn"
+        ) from exc
+
+    mcp_server = _build_server()
+    app = mcp_server.sse_app(mount_path=mount_path)
+    logger.info("Starting MCP SSE server on http://%s:%d", host, port)
+    uvicorn.run(app, host=host, port=port, log_level=log_level)  # type: ignore[no-untyped-call]
 
 
-__all__ = ["serve", "_registry", "_executor", "_router"]
+def serve_streamable_http(
+    *,
+    host: str = "0.0.0.0",  # noqa: S104
+    port: int = 8080,
+    log_level: str = "info",
+) -> None:
+    """Launch the MCP server over **Streamable HTTP** transport (MCP 1.x).
+
+    Streamable HTTP is the modern successor to SSE transport, supporting
+    full bidirectional streaming over a single HTTP connection.
+    Requires ``uvicorn`` to be installed.
+
+    Args:
+        host:      Network interface to bind.
+        port:      TCP port.
+        log_level: Uvicorn log level.
+    """
+    try:
+        import uvicorn  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "uvicorn is required for HTTP transport. "
+            "Install it with: pip install uvicorn"
+        ) from exc
+
+    mcp_server = _build_server()
+    app = mcp_server.streamable_http_app()
+    logger.info("Starting MCP Streamable HTTP server on http://%s:%d", host, port)
+    uvicorn.run(app, host=host, port=port, log_level=log_level)  # type: ignore[no-untyped-call]
+
+
+def get_asgi_app(transport: str = "sse", mount_path: str | None = None) -> Any:
+    """Return the ASGI application for embedding in an existing ASGI server.
+
+    Useful when you want to mount the MCP server under a larger application
+    rather than running it standalone.
+
+    Args:
+        transport:  ``"sse"`` or ``"streamable-http"``.
+        mount_path: Optional URL prefix (SSE only).
+
+    Returns:
+        A Starlette ASGI application instance.
+
+    Example::
+
+        from replicate_mcp.server import get_asgi_app
+        mcp_app = get_asgi_app(transport="sse", mount_path="/mcp")
+        # Mount into your existing Starlette/FastAPI app
+    """
+    mcp_server = _build_server()
+    if transport == "streamable-http":
+        return mcp_server.streamable_http_app()
+    return mcp_server.sse_app(mount_path=mount_path)
+
+
+__all__ = [
+    "serve",
+    "serve_http",
+    "serve_streamable_http",
+    "get_asgi_app",
+    "_registry",
+    "_executor",
+    "_router",
+]
