@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-04-20
+
+### Added (Phase 3 · Sprints S9–S12 — Differentiation)
+
+**S9 · E11 — Dynamic Model Discovery**
+- **`discovery.py`** — `ModelDiscovery` with TTL-based caching, owner/tag filters, `max_models` cap, and background refresh loop (`start_background_refresh` / `stop_background_refresh`). `DiscoveryConfig` dataclass. `DiscoveryResult` summary. `discover_and_register()` one-shot convenience function. Models auto-registered via `registry.register_or_update()` so manual customisations survive refresh.
+
+**S9 · E12 — Fluent Python SDK**
+- **`sdk.py`** — `@agent` decorator (bare and parameterised forms); `AgentBuilder` with full method-chaining (`.model()`, `.description()`, `.tag()`, `.streaming()`, `.estimated_cost()`, `.avg_latency()`, `.input_schema()`, `.build()`, `.register()`); `WorkflowBuilder` → `WorkflowSpec` (immutable) + `WorkflowStep`; `AgentContext` context manager for test isolation. (ADR-006)
+
+**S10 · E13 — Quality-of-Service Routing**
+- **`qos.py`** — `QoSLevel` enum (FAST / BALANCED / QUALITY); `QoSPolicy` with per-level default SLA constraints and `filter_candidates()` for graceful degradation; `UCB1Router` (Upper Confidence Bound 1 bandit, O(√(n log n)) regret); `AdaptiveRouter` meta-router that uses UCB1 during cold-start then switches to Thompson Sampling.
+
+**S10 · E14 — Plugin Ecosystem**
+- **`plugins/`** — `BasePlugin` ABC with lifecycle (`setup`, `teardown`) and optional hooks (`on_agent_run`, `on_agent_result`, `on_error`); `PluginMetadata` dataclass; `load_plugins()` with entry-point discovery (`replicate_mcp.plugins` group) + `extra_classes` injection for tests; `load_plugin_from_path()` for dynamic loading; `PluginRegistry` with thread-safe lifecycle management and hook dispatch (errors caught and logged). Hooks never crash the executor. (ADR-007)
+- **`pyproject.toml`** — `[project.entry-points."replicate_mcp.plugins"]` group declared so the ecosystem is documented and ready.
+
+**S11 · E15 — Distributed Execution**
+- **`distributed.py`** — `WorkerNode` with configurable `asyncio.Queue`, concurrency pool, back-pressure (`NodeOverloadError`), health state (`NodeHealth`); `NodeRegistry` with `least_loaded()` routing; `DistributedExecutor` with task submission, failover on overload, `run_many()` for batch execution, `stream()` async generator; `TaskHandle` (awaitable future); `TaskResult` with timing and status. Async context manager supported. (ADR-008)
+
+**S12 · E16 — Documentation**
+- **`docs/guides/getting-started.md`** — tested 30-minute onboarding: install → CLI → discovery → QoS routing → 2-node distribution → plugins → MCP server.
+- **`docs/guides/plugins.md`** — plugin development guide with lifecycle diagram, minimal example, package structure, testing patterns, and best practices.
+- **`docs/api/index.md`** — complete API reference index covering all 20 public modules.
+- **`docs/api/sdk.md`**, **`docs/api/discovery.md`** — API reference pages with mkdocstrings directives and usage examples.
+- **`docs/adr/006.md`** — ADR for fluent SDK and `@agent` decorator design.
+- **`docs/adr/007.md`** — ADR for plugin system design (entry points).
+- **`docs/adr/008.md`** — ADR for distributed execution model (asyncio workers).
+- **`mkdocs.yml`** — updated navigation, mkdocstrings integration (Google docstring style), Material theme with tabs and search.
+
+### Changed
+
+- **`__init__.py`** — bumped to `v0.4.0`; all Phase 3 public symbols re-exported from package root.
+- **`pyproject.toml`** — bumped to `v0.4.0`; license changed to SPDX string; `[all]` extra inlined (Poetry 2.x compat); security pins added for starlette, python-multipart, pygments.
+- **`ci.yml`** — coverage gate raised from 85% → 90% (Phase 3 exit criterion).
+
+### Tests
+
+- 172 new tests across `test_discovery.py`, `test_sdk.py`, `test_qos.py`, `test_plugins.py`, `test_distributed.py`.
+- Total: **575 tests**, **91.47% line coverage** (gate: ≥90%).
+
+---
+
 ## [0.3.0] — 2026-04-20
 
 ### Added (Phase 2 · Sprints S5–S8 — Hardening)

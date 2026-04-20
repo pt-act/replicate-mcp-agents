@@ -1,13 +1,58 @@
 site_name: Replicate MCP Agents
 site_url: https://your-org.github.io/replicate-mcp-agents/
+repo_url: https://github.com/your-org/replicate-mcp-agents
+repo_name: your-org/replicate-mcp-agents
+
 nav:
-  - Getting Started: docs/getting-started.md
-  - MCP Integration: docs/mcp-integration.md
-  - Workflow Guide: docs/workflow-guide.md
+  - Home: README.md
+  - Guides:
+    - Getting Started: docs/guides/getting-started.md
+    - Plugin Development: docs/guides/plugins.md
+  - API Reference:
+    - Overview: docs/api/index.md
+    - SDK (@agent / builders): docs/api/sdk.md
+    - Discovery: docs/api/discovery.md
+  - SLOs & Operations:
+    - SLOs: docs/slos.md
+    - Top-10 Failures: docs/runbooks/top-10-failures.md
+  - Architecture Decisions:
+    - ADR-003 Protocol Interfaces: docs/adr/003.md
+    - ADR-004 Resilience Patterns: docs/adr/004.md
+    - ADR-005 Cost-Aware Routing: docs/adr/005.md
+    - ADR-006 Fluent SDK: docs/adr/006.md
+    - ADR-007 Plugin System: docs/adr/007.md
+    - ADR-008 Distributed Execution: docs/adr/008.md
+  - Changelog: CHANGELOG.md
+
 theme:
   name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            merge_init_into_class: true
+            members_order: source
+
 markdown_extensions:
   - admonition
   - codehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - toc:
       permalink: true
