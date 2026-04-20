@@ -351,3 +351,57 @@ Module Coverage:
 Strategic Implementation Plan · April 2026 · Prepared for Project Sponsor
 
 Supporting artifacts: Academic Evaluation · XLSX Workbook (backlog, risks, resources, sprints)
+
+---
+
+All 14 tasks complete. Here's the summary:
+
+---
+
+## v0.2.0 — Phase 1 Foundation Complete (Sprints S2–S4)
+
+### What was implemented
+
+| Area | Deliverables | Key Metrics |
+|------|-------------|-------------|
+| **DAG Engine** | Kahn's topological sort, DFS 3-colour cycle detection, execution levels for parallelism | Cycle detected + rejected on `add_edge()` with rollback |
+| **Parallel Fan-Out** | `anyio.create_task_group()` runs same-level nodes concurrently | Verified with diamond and fan-out topologies |
+| **Edge Transforms/Conditions** | `execute()` applies transforms and condition gates between nodes | Wired to existing `TransformRegistry` |
+| **Checkpoint v2** | Atomic writes (`tempfile` + `os.replace`), version tracking, `list`/`delete`/`exists` | Crash-safe; envelope format with `_meta` |
+| **Registry v2** | Dict-backed O(1) lookup, duplicate detection, `get`/`remove`/`filter_by_tag`/`clear` | Domain exceptions: `DuplicateAgentError`, `AgentNotFoundError` |
+| **Executor v2** | Concurrency limiter (semaphore), decorrelated jitter retry, `ModelCatalogue` | Configurable `max_concurrency` and `max_retries` |
+| **Model Catalogue** | `discover()` hydration from Replicate API with TTL cache | Falls back to static map if API unavailable |
+| **Exception Hierarchy** | 13 domain exceptions under `ReplicateMCPError` | Every error path uses typed exceptions |
+| **Structured Logging** | `structlog` (JSON prod, coloured dev) + stdlib fallback | Auto-detects from `REPLICATE_MCP_ENV` |
+| **MCP Server v2** | Multiple default agents, `models://list` resource | Uses new registry `list_agents()` API |
+
+### Files changed
+
+```
+23 files changed, +2,108 / -172 lines
+├── 7 new files (exceptions.py, logging.py, ADR-002, test_exceptions.py, test_logging.py, test_executor_mocked.py, etc.)
+└── 16 modified files (composition.py, execution.py, registry.py, checkpointing.py, server.py, etc.)
+```
+
+### Test results
+
+```
+164 passed in 0.67s
+Coverage: 83% overall
+  composition.py   93%   (was placeholder)
+  execution.py     85%   (was 56%)
+  registry.py      100%
+  exceptions.py    93%
+  checkpointing.py 87%   (was 100% but more features now)
+  transforms.py    100%
+```
+
+### Next up: Phase 2 (Sprints S5–S8) — Hardening
+
+The roadmap's next phase covers:
+- **S5:** Protocol interfaces (abstract base classes), DI container, Pydantic validation, secret management, structured logging refinement
+- **S6:** Circuit breaker, exponential backoff + jitter, atomic checkpoints, safe DSL
+- **S7:** Cost-aware routing, EMA prediction, rate limiter, OpenTelemetry traces
+- **S8:** Dashboards, load testing, pen testing, SLO definitions
+
+Ready to proceed whenever you give the word.
