@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
@@ -55,6 +56,14 @@ class TestMakeKey:
         a = ResultCache.make_key("m/m", {"a": 1, "b": 2})
         b = ResultCache.make_key("m/m", {"b": 2, "a": 1})
         assert a == b
+
+    def test_circular_reference_payload_falls_back_to_repr(self) -> None:
+        """Circular reference in payload triggers ValueError → repr fallback."""
+        d: dict[str, Any] = {}
+        d["self"] = d  # circular reference
+        key = ResultCache.make_key("m/m", d)
+        assert len(key) == 32
+        assert all(c in "0123456789abcdef" for c in key)
 
 
 class TestGetPut:
