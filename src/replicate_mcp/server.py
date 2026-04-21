@@ -191,7 +191,7 @@ def serve() -> None:
 
 def serve_http(
     *,
-    host: str = "0.0.0.0",  # noqa: S104 — server default binds all interfaces intentionally
+    host: str = "0.0.0.0",  # noqa: S104  # nosec B104 — server default binds all interfaces intentionally
     port: int = 8080,
     mount_path: str | None = None,
     log_level: str = "info",
@@ -216,8 +216,7 @@ def serve_http(
         import uvicorn  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
-            "uvicorn is required for HTTP transport. "
-            "Install it with: pip install uvicorn"
+            "uvicorn is required for HTTP transport. " "Install it with: pip install uvicorn"
         ) from exc
 
     mcp_server = _build_server()
@@ -228,7 +227,7 @@ def serve_http(
 
 def serve_streamable_http(
     *,
-    host: str = "0.0.0.0",  # noqa: S104
+    host: str = "0.0.0.0",  # noqa: S104  # nosec B104
     port: int = 8080,
     log_level: str = "info",
 ) -> None:
@@ -247,8 +246,7 @@ def serve_streamable_http(
         import uvicorn  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
-            "uvicorn is required for HTTP transport. "
-            "Install it with: pip install uvicorn"
+            "uvicorn is required for HTTP transport. " "Install it with: pip install uvicorn"
         ) from exc
 
     mcp_server = _build_server()

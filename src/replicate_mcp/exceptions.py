@@ -143,6 +143,87 @@ class CheckpointCorruptedError(ReplicateMCPError):
         super().__init__(msg)
 
 
+# ---------------------------------------------------------------------------
+# Error classification for retry logic (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+class RetryableError(ReplicateMCPError):
+    """Base class for errors that are safe to retry.
+
+    Subclasses represent transient failures (rate limits, server errors)
+    where repeating the request after a delay may succeed.
+    """
+
+
+class NonRetryableError(ReplicateMCPError):
+    """Base class for errors that should *not* be retried.
+
+    Subclasses represent permanent failures (authentication, bad requests)
+    where repeating the request will not change the outcome.
+    """
+
+
+class RateLimitError(RetryableError):
+    """Raised when the Replicate API rate-limits the request.
+
+    Attributes:
+        retry_after: Suggested wait time in seconds, if the API provided one.
+    """
+
+    def __init__(self, retry_after: float | None = None) -> None:
+        self.retry_after = retry_after
+        msg = "Rate limited"
+        if retry_after is not None:
+            msg += f" — retry after {retry_after:.0f}s"
+        super().__init__(msg)
+
+
+class ServerError(RetryableError):
+    """Raised when the upstream server returns a 5xx response.
+
+    Attributes:
+        status_code: HTTP status code (e.g. 503).
+        message:     Human-readable detail from the response body.
+    """
+
+    def __init__(self, status_code: int = 500, message: str = "") -> None:
+        self.status_code = status_code
+        self.message = message
+        detail = f" {message}" if message else ""
+        super().__init__(f"Server error {status_code}{detail}")
+
+
+class AuthenticationError(NonRetryableError):
+    """Raised when authentication fails (e.g. invalid or missing API token).
+
+    Attributes:
+        token_hint: Partial token for identification (never the full secret).
+    """
+
+    def __init__(self, token_hint: str = "") -> None:
+        self.token_hint = token_hint
+        msg = "Authentication failed"
+        if token_hint:
+            msg += f" — token hint: {token_hint}"
+        super().__init__(msg)
+
+
+class ClientError(NonRetryableError):
+    """Raised when the client sends a bad request (4xx response).
+
+    Attributes:
+        status_code: HTTP status code (e.g. 400).
+        message:     Human-readable detail from the response body.
+    """
+
+    def __init__(self, status_code: int = 400, message: str = "") -> None:
+        self.status_code = status_code
+        self.message = message
+        detail = f" {message}" if message else ""
+        super().__init__(f"Client error {status_code}{detail}")
+
+
 __all__ = [
     "ReplicateMCPError",
     "CycleDetectedError",
@@ -157,4 +238,11 @@ __all__ = [
     "TransformNotFoundError",
     "ConditionNotFoundError",
     "CheckpointCorruptedError",
+    # Phase 6 — error classification
+    "RetryableError",
+    "NonRetryableError",
+    "RateLimitError",
+    "ServerError",
+    "AuthenticationError",
+    "ClientError",
 ]

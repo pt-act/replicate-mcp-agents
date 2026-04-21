@@ -65,8 +65,10 @@ def app() -> None:
     show_default=True,
     help="MCP transport protocol.",
 )
-@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host (HTTP transports).")  # noqa: S104
-@click.option("--port", default=8080, show_default=True, type=int, help="TCP port (HTTP transports).")
+@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host (HTTP transports).")  # noqa: S104  # nosec B104
+@click.option(
+    "--port", default=8080, show_default=True, type=int, help="TCP port (HTTP transports)."
+)
 @click.option("--mount-path", default=None, help="URL prefix for SSE transport.")
 @click.option("--log-level", default="info", show_default=True, help="Uvicorn log level.")
 @click.option(
@@ -114,8 +116,7 @@ def serve(
         try:
             count = load_workflows_file(workflows_file)
             console.print(
-                f"✓ Loaded [bold]{count}[/bold] workflow(s) from "
-                f"[cyan]{workflows_file}[/cyan]"
+                f"✓ Loaded [bold]{count}[/bold] workflow(s) from " f"[cyan]{workflows_file}[/cyan]"
             )
         except Exception as exc:  # noqa: BLE001
             err_console.print(f"✗ Failed to load workflows file: {exc}")
@@ -141,6 +142,188 @@ def serve(
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def doctor() -> None:
+    """Run diagnostic checks and report system health.
+
+    Checks:
+
+    \b
+      ✓  API token presence and format
+      ✓  Python version compatibility
+      ✓  Required packages importable
+      ✓  Replicate API connectivity
+      ✓  Config directory writable
+      ✓  Audit log status
+      ✓  Router state status
+
+    Example::
+
+        replicate-agent doctor
+    """
+    checks_passed = 0
+    checks_total = 0
+
+    # --- 1. API Token ---
+    checks_total += 1
+    token = _secret_manager.get_token(required=False)
+    if token:
+        valid = _secret_manager.validate_replicate_token(token)
+        masked = _secret_manager.masked_token()
+        if valid:
+            console.print(f"  [green]✓[/green] API Token  {masked}  (format valid)")
+            checks_passed += 1
+        else:
+            console.print(
+                f"  [yellow]⚠[/yellow] API Token  {masked}  (format unexpected — may still work)"
+            )
+            checks_passed += 1  # still counts as pass, just unexpected format
+    else:
+        console.print("  [red]✗[/red] API Token  not set — export REPLICATE_API_TOKEN")
+
+    # --- 2. Python version ---
+    checks_total += 1
+    import sys  # noqa: PLC0415
+
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    if sys.version_info >= (3, 10):  # noqa: UP036
+        console.print(f"  [green]✓[/green] Python      {py_version}")
+        checks_passed += 1
+    else:
+        console.print(f"  [red]✗[/red] Python      {py_version} — requires 3.10+")
+
+    # --- 3. Core dependencies ---
+    checks_total += 1
+    missing_deps: list[str] = []
+    for dep_name in (
+        "replicate",
+        "mcp",
+        "click",
+        "pydantic",
+        "anyio",
+        "httpx",
+        "yaml",
+        "rich",
+        "structlog",
+    ):
+        try:
+            __import__(dep_name)
+        except ImportError:
+            missing_deps.append(dep_name)
+    if not missing_deps:
+        console.print("  [green]✓[/green] Packages    all core dependencies importable")
+        checks_passed += 1
+    else:
+        console.print(f"  [red]✗[/red] Packages    missing: {', '.join(missing_deps)}")
+
+    # --- 4. Replicate API connectivity ---
+    checks_total += 1
+    if token:
+        try:
+            import httpx  # noqa: PLC0415
+
+            # Lightweight connectivity check with timeout — avoid blocking indefinitely
+            resp = httpx.get(
+                "https://api.replicate.com/v1/models",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"limit": 1},
+                timeout=5.0,
+            )
+            if resp.status_code < 500:
+                console.print("  [green]✓[/green] API         Replicate API reachable")
+                checks_passed += 1
+            else:
+                console.print(
+                    f"  [red]✗[/red] API         Replicate API returned {resp.status_code}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  [red]✗[/red] API         Replicate API unreachable: {exc}")
+    else:
+        console.print("  [dim]— API         skipped (no token)[/dim]")
+        checks_passed += 1  # not a failure, just skipped
+
+    # --- 5. Config directory ---
+    checks_total += 1
+    config_dir = Path.home() / ".replicate"
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        test_file = config_dir / ".doctor_write_test"
+        test_file.write_text("ok")
+        test_file.unlink()
+        console.print(f"  [green]✓[/green] Config dir  {config_dir} (writable)")
+        checks_passed += 1
+    except OSError as exc:
+        console.print(f"  [red]✗[/red] Config dir  {config_dir} not writable: {exc}")
+
+    # --- 6. Audit log ---
+    checks_total += 1
+    try:
+        from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+        audit = AuditLogger()
+        if audit.exists():
+            records = audit.read_records()
+            console.print(
+                f"  [green]✓[/green] Audit log   {len(records)} record(s), "
+                f"{audit.size_bytes():,} bytes"
+            )
+            checks_passed += 1
+        else:
+            console.print("  [dim]— Audit log   not yet created (normal for first run)[/dim]")
+            checks_passed += 1  # audit log absence is not a failure
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] Audit log   error: {exc}")
+
+    # --- 7. Router state ---
+    checks_total += 1
+    try:
+        from replicate_mcp.routing import CostAwareRouter  # noqa: PLC0415
+        from replicate_mcp.utils.router_state import RouterStateManager  # noqa: PLC0415
+
+        router_mgr = RouterStateManager()
+        if router_mgr.exists():
+            router = CostAwareRouter()
+            model_count = router_mgr.load_into_router(router)
+            console.print(
+                f"  [green]✓[/green] Router state  {model_count} model(s) with learned statistics"
+            )
+            checks_passed += 1
+        else:
+            console.print("  [dim]— Router state  no persisted state (cold start)[/dim]")
+            checks_passed += 1  # no state is not a failure
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] Router state  error: {exc}")
+
+    # --- Summary ---
+    console.print()
+    if checks_passed == checks_total:
+        console.print(
+            Panel(
+                f"[bold green]All {checks_total} checks passed[/bold green]\n"
+                "System is ready to run.",
+                title="Doctor Report",
+                border_style="green",
+            )
+        )
+    else:
+        failed = checks_total - checks_passed
+        console.print(
+            Panel(
+                f"[bold red]{failed}/{checks_total} check(s) failed[/bold red]\n"
+                "Fix the issues above before running agents.",
+                title="Doctor Report",
+                border_style="red",
+            )
+        )
+        # Exit 0 — doctor is a diagnostic reporter, not a gatekeeper.
+        # Users should read the output, not rely on exit codes.
+
+
+# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 
@@ -156,9 +339,7 @@ def init() -> None:
         )
         console.print(f"✓ Created [cyan]{config_path}[/cyan]", style="green")
     else:
-        console.print(
-            f"• Config already exists at [cyan]{config_path}[/cyan]", style="yellow"
-        )
+        console.print(f"• Config already exists at [cyan]{config_path}[/cyan]", style="yellow")
 
     # Warn if token missing
     token = _secret_manager.get_token(required=False)
@@ -370,9 +551,7 @@ def _save_checkpoint(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     target = checkpoint_dir / f"{workflow_name}_step_{step_idx}.json"
-    with tempfile.NamedTemporaryFile(
-        "w", dir=checkpoint_dir, delete=False, suffix=".json"
-    ) as tmp:
+    with tempfile.NamedTemporaryFile("w", dir=checkpoint_dir, delete=False, suffix=".json") as tmp:
         json.dump(state, tmp)
         tmp_path = Path(tmp.name)
     tmp_path.replace(target)
@@ -432,6 +611,12 @@ def list_agents() -> None:
     show_default=True,
     help="Max seconds to wait for a response.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Estimate cost and validate input without calling the Replicate API.",
+)
 def run_agent(
     agent_id: str,
     input_payload: str | None,
@@ -439,6 +624,7 @@ def run_agent(
     stream: bool,
     output_json: bool,
     timeout_s: float,
+    dry_run: bool,
 ) -> None:
     """Invoke a single Replicate agent and print streaming output.
 
@@ -446,11 +632,16 @@ def run_agent(
     model path (``meta/llama-3-8b-instruct``).  Use ``--model`` to
     override the registered model path with any Replicate model.
 
+    Use ``--dry-run`` to estimate cost and validate input without making
+    an actual API call.  The router's EMA cost prediction is used for
+    the estimate.
+
     Examples::
 
     \b
       replicate-agent agents run llama3_chat --input '{"prompt": "Hello!"}'
       replicate-agent agents run my_agent --model meta/llama-3-70b --json
+      replicate-agent agents run llama3_chat --dry-run --input '{"prompt": "test"}'
     """
     payload = _load_payload(input_payload)
 
@@ -478,6 +669,55 @@ def run_agent(
     model_map = dict(DEFAULT_MODEL_MAP)
     if model_override:
         model_map[agent_id] = model_override
+
+    # Dry-run mode: estimate cost and validate without calling the API
+    if dry_run:
+        executor = AgentExecutor(api_token=token or "dry-run-token", model_map=model_map)
+        try:
+            model_id = executor.resolve_model(validated.agent_id)
+        except Exception as exc:  # noqa: BLE001
+            err_console.print(f"[bold red]✗ Model resolution failed:[/bold red] {exc}")
+            sys.exit(1)
+
+        # Estimate cost from router EMA data
+        estimated_cost: float | None = None
+        estimated_latency: float | None = None
+        try:
+            from replicate_mcp.routing import CostAwareRouter  # noqa: PLC0415
+            from replicate_mcp.utils.router_state import RouterStateManager  # noqa: PLC0415
+
+            router_mgr = RouterStateManager()
+            if router_mgr.exists():
+                router = CostAwareRouter()
+                router_mgr.load_into_router(router)
+                model_stats = router.stats().get(model_id)
+                if model_stats is not None:
+                    estimated_cost = model_stats.ema_cost_usd
+                    estimated_latency = model_stats.ema_latency_ms
+        except Exception:  # noqa: BLE001,S110
+            pass
+
+        table = Table(title="Dry-Run Report", show_header=True)
+        table.add_column("Check", style="cyan")
+        table.add_column("Result")
+        table.add_row("Agent ID", validated.agent_id)
+        table.add_row("Model", model_id)
+        table.add_row("Input keys", ", ".join(validated.payload.keys()) or "(empty)")
+        table.add_row("Streaming", "✓" if stream else "✗")
+
+        if estimated_cost is not None:
+            table.add_row("Est. cost", f"${estimated_cost:.4f}")
+        else:
+            table.add_row("Est. cost", "[dim]no router data (cold start)[/dim]")
+
+        if estimated_latency is not None:
+            table.add_row("Est. latency", f"{estimated_latency:.0f} ms")
+        else:
+            table.add_row("Est. latency", "[dim]no router data[/dim]")
+
+        console.print(table)
+        console.print("\n[dim]No API call was made. Remove --dry-run to execute.[/dim]")
+        return
 
     executor = AgentExecutor(api_token=token, model_map=model_map)
     all_chunks: list[dict[str, Any]] = []
@@ -523,14 +763,12 @@ def run_agent(
                                 Panel(
                                     full_output,
                                     title=f"[green]✓ {validated.agent_id}[/green]  "
-                                          f"[dim]{latency:.0f}ms[/dim]",
+                                    f"[dim]{latency:.0f}ms[/dim]",
                                     border_style="green",
                                 )
                             )
         if scope.cancelled_caught:
-            err_console.print(
-                f"[bold red]✗ Timed out after {validated.timeout_s:.0f}s.[/bold red]"
-            )
+            err_console.print(f"[bold red]✗ Timed out after {validated.timeout_s:.0f}s.[/bold red]")
             sys.exit(1)
 
     asyncio.run(_stream())
@@ -550,7 +788,7 @@ def workers() -> None:
 
 
 @workers.command("start")
-@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host.")  # noqa: S104
+@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host.")  # noqa: S104  # nosec B104
 @click.option("--port", default=7999, show_default=True, type=int, help="TCP port.")
 @click.option("--node-id", default=None, help="Human-readable node identifier.")
 @click.option("--concurrency", default=8, show_default=True, type=int, help="Max parallel tasks.")
@@ -654,7 +892,9 @@ def audit() -> None:
 
 
 @audit.command("tail")
-@click.option("--n", "count", default=20, show_default=True, type=int, help="Number of records to show.")
+@click.option(
+    "--n", "count", default=20, show_default=True, type=int, help="Number of records to show."
+)
 @click.option("--agent", "filter_agent", default=None, help="Filter by agent name.")
 def audit_tail(count: int, filter_agent: str | None) -> None:
     """Display the most recent invocations from the audit log."""
@@ -696,9 +936,7 @@ def audit_tail(count: int, filter_agent: str | None) -> None:
         )
 
     console.print(table)
-    console.print(
-        f"[dim]Log path: {log.path}  ({log.size_bytes():,} bytes)[/dim]"
-    )
+    console.print(f"[dim]Log path: {log.path}  ({log.size_bytes():,} bytes)[/dim]")
 
 
 @audit.command("costs")
@@ -732,9 +970,7 @@ def audit_costs(period: str) -> None:
     total_calls = sum(v["calls"] for v in summary.values())
     total_ok = sum(v["successes"] for v in summary.values())
 
-    table = Table(
-        title=f"Cost Dashboard — {period.capitalize()}", show_header=True
-    )
+    table = Table(title=f"Cost Dashboard — {period.capitalize()}", show_header=True)
     table.add_column("Model", style="cyan", min_width=30)
     table.add_column("Calls", justify="right")
     table.add_column("Success", justify="right")
@@ -742,9 +978,7 @@ def audit_costs(period: str) -> None:
 
     for model, stats in sorted(summary.items(), key=lambda x: -x[1]["cost_usd"]):
         success_pct = (
-            f"{stats['successes'] / stats['calls'] * 100:.1f}%"
-            if stats["calls"] > 0
-            else "—"
+            f"{stats['successes'] / stats['calls'] * 100:.1f}%" if stats["calls"] > 0 else "—"
         )
         table.add_row(
             model,
@@ -803,9 +1037,7 @@ def audit_stats(agent_name: str | None, period: str) -> None:
     for rec in records:
         by_agent.setdefault(rec.agent, []).append(rec)
 
-    table = Table(
-        title=f"Latency & Success Stats — {period.capitalize()}", show_header=True
-    )
+    table = Table(title=f"Latency & Success Stats — {period.capitalize()}", show_header=True)
     table.add_column("Agent", style="cyan", min_width=20)
     table.add_column("Calls", justify="right")
     table.add_column("Success %", justify="right")
@@ -845,9 +1077,7 @@ def audit_clear() -> None:
         return
     size = log.size_bytes()
     log.clear()
-    console.print(
-        f"✓ Audit log cleared ({size:,} bytes deleted from [cyan]{log.path}[/cyan])"
-    )
+    console.print(f"✓ Audit log cleared ({size:,} bytes deleted from [cyan]{log.path}[/cyan])")
 
 
 # ---------------------------------------------------------------------------

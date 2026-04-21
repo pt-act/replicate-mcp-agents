@@ -107,25 +107,22 @@ class TestAuditLoggerRecord:
 
     def test_record_computes_input_hash(self, tmp_path: Path) -> None:
         log = AuditLogger(path=tmp_path / "audit.jsonl")
-        result = log.record(
-            agent="a", model="m/m", latency_ms=100.0,
-            payload={"prompt": "hi"}
-        )
+        result = log.record(agent="a", model="m/m", latency_ms=100.0, payload={"prompt": "hi"})
         assert result is not None
         assert result.input_hash != ""
 
     def test_record_does_not_store_payload_by_default(self, tmp_path: Path) -> None:
         log = AuditLogger(path=tmp_path / "audit.jsonl")
-        log.record(agent="a", model="m/m", latency_ms=100.0,
-                   payload={"secret": "value"})
+        log.record(agent="a", model="m/m", latency_ms=100.0, payload={"sensitive_key": "value"})
         line = log.path.read_text().splitlines()[0]
         data = json.loads(line)
         assert "payload" not in data
 
     def test_record_stores_payload_with_log_inputs(self, tmp_path: Path) -> None:
         log = AuditLogger(path=tmp_path / "audit.jsonl")
-        log.record(agent="a", model="m/m", latency_ms=100.0,
-                   payload={"prompt": "hi"}, log_inputs=True)
+        log.record(
+            agent="a", model="m/m", latency_ms=100.0, payload={"prompt": "hi"}, log_inputs=True
+        )
         line = log.path.read_text().splitlines()[0]
         data = json.loads(line)
         assert data.get("payload") == {"prompt": "hi"}
@@ -161,7 +158,9 @@ class TestAuditLoggerRead:
 
     def test_read_skips_malformed_lines(self, tmp_path: Path) -> None:
         path = tmp_path / "audit.jsonl"
-        path.write_text('{"agent":"ok","model":"m/m","latency_ms":100,"cost_usd":0,"success":true,"input_hash":"","session_id":"s"}\n{bad json\n')
+        path.write_text(
+            '{"agent":"ok","model":"m/m","latency_ms":100,"cost_usd":0,"success":true,"input_hash":"","session_id":"s"}\n{bad json\n'
+        )
         log = AuditLogger(path=path)
         records = log.read_records()
         # Only the valid line should be parsed
@@ -251,8 +250,14 @@ class TestComputeCostSummary:
 class TestFilterByPeriod:
     def _record(self, ts: str) -> AuditRecord:
         return AuditRecord(
-            ts=ts, agent="a", model="m/m", latency_ms=100.0,
-            cost_usd=0.0, success=True, input_hash="", session_id="s"
+            ts=ts,
+            agent="a",
+            model="m/m",
+            latency_ms=100.0,
+            cost_usd=0.0,
+            success=True,
+            input_hash="",
+            session_id="s",
         )
 
     def test_all_period_returns_everything(self) -> None:
