@@ -101,7 +101,7 @@ class ModelCatalogue:
     def __init__(self) -> None:
         self._models: dict[str, ModelInfo] = {}
         self._ttl_seconds: float = 300.0
-        self._last_refresh: float = 0.0
+        self._last_refresh: float | None = None
         # Internal ModelDiscovery delegate (populated lazily on first discover())
         self._discovery_delegate: ModelDiscovery | None = None
 
@@ -110,6 +110,8 @@ class ModelCatalogue:
         return dict(self._models)
 
     def is_stale(self) -> bool:
+        if self._last_refresh is None:
+            return True
         return (time.monotonic() - self._last_refresh) > self._ttl_seconds
 
     def add(self, key: str, info: ModelInfo) -> None:
