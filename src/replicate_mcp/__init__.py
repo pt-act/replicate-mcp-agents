@@ -27,6 +27,19 @@ Phase 5a public surface:
     - Plugin middleware: ``on_agent_run`` / ``on_agent_result`` hooks now return
       optional replacement payloads / chunk-lists for mutable middleware.
     - ``AgentExecutor`` now accepts ``plugin_registry``, ``audit_logger``, ``cache``.
+
+Phase 6 public surface:
+    - :mod:`~replicate_mcp.exceptions` — ``RetryableError``, ``NonRetryableError``,
+      ``AuthenticationError``, ``RateLimitError``, ``ServerError``, ``ClientError``
+      for error classification in retry logic.
+    - :func:`~replicate_mcp.resilience.is_retryable_error` — classifies errors
+      as retryable or non-retryable before deciding to retry.
+    - :class:`~replicate_mcp.routing.RoutingDecision` — explains *why* a model
+      was selected; returned by ``CostAwareRouter.select_model_explain()``.
+    - :mod:`~replicate_mcp.plugins.builtin` — built-in guardrail plugins:
+      ``PIIMaskPlugin``, ``ContentFilterPlugin``, ``CostCapPlugin``.
+    - ``replicate-agent doctor`` — diagnostic command for first-run health checks.
+    - ``replicate-agent agents run --dry-run`` — cost estimation without API call.
 """
 
 from replicate_mcp.cache import ResultCache
@@ -38,8 +51,25 @@ from replicate_mcp.distributed import (
     WorkerNode,
     WorkerTransport,
 )
-from replicate_mcp.plugins import BasePlugin, PluginRegistry, load_plugins
+from replicate_mcp.exceptions import (
+    AuthenticationError,
+    ClientError,
+    NonRetryableError,
+    RateLimitError,
+    RetryableError,
+    ServerError,
+)
+from replicate_mcp.plugins import (
+    BasePlugin,
+    ContentFilterPlugin,
+    CostCapPlugin,
+    PIIMaskPlugin,
+    PluginRegistry,
+    load_plugins,
+)
 from replicate_mcp.qos import AdaptiveRouter, QoSLevel, QoSPolicy, UCB1Router
+from replicate_mcp.resilience import is_retryable_error
+from replicate_mcp.routing import CostAwareRouter, ModelStats, RoutingDecision, RoutingWeights
 from replicate_mcp.sdk import (
     AgentBuilder,
     AgentContext,
@@ -80,6 +110,9 @@ __all__ = [
     "BasePlugin",
     "PluginRegistry",
     "load_plugins",
+    "PIIMaskPlugin",
+    "ContentFilterPlugin",
+    "CostCapPlugin",
     # distributed — local
     "WorkerNode",
     "DistributedExecutor",
@@ -97,4 +130,17 @@ __all__ = [
     "AuditRecord",
     # Phase 5a — result cache
     "ResultCache",
+    # Phase 6 — routing decision explanation
+    "CostAwareRouter",
+    "ModelStats",
+    "RoutingDecision",
+    "RoutingWeights",
+    # Phase 6 — error classification
+    "RetryableError",
+    "NonRetryableError",
+    "AuthenticationError",
+    "RateLimitError",
+    "ServerError",
+    "ClientError",
+    "is_retryable_error",
 ]

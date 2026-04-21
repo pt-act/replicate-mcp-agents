@@ -168,9 +168,8 @@ class Observability:
             return
 
         resource = Resource.create({SERVICE_NAME: self.config.service_name})
-        endpoint = (
-            self.config.otlp_endpoint
-            or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+        endpoint = self.config.otlp_endpoint or os.environ.get(
+            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
         )
 
         # --- Traces ---
@@ -179,32 +178,31 @@ class Observability:
             if HAS_OTLP:
                 try:
                     span_exporter = OTLPSpanExporter(endpoint=endpoint)
-                    tracer_provider.add_span_processor(
-                        BatchSpanProcessor(span_exporter)
-                    )
+                    tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
                 except Exception:  # noqa: BLE001
                     if self.config.console_fallback:
                         tracer_provider.add_span_processor(
                             BatchSpanProcessor(ConsoleSpanExporter())
                         )
             elif self.config.console_fallback:
-                tracer_provider.add_span_processor(
-                    BatchSpanProcessor(ConsoleSpanExporter())
-                )
+                tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
             otel_trace.set_tracer_provider(tracer_provider)
             self._tracer = otel_trace.get_tracer(self.config.service_name)
 
         # --- Metrics ---
         if self.config.enable_metrics:
+            metric_exporter: OTLPMetricExporter | ConsoleMetricExporter | None
             if HAS_OTLP:
                 try:
                     metric_exporter = OTLPMetricExporter(endpoint=endpoint)
                 except Exception:  # noqa: BLE001
-                    metric_exporter = ConsoleMetricExporter() if self.config.console_fallback else None  # type: ignore[assignment]
+                    metric_exporter = (
+                        ConsoleMetricExporter() if self.config.console_fallback else None
+                    )
             elif self.config.console_fallback:
-                metric_exporter = ConsoleMetricExporter()  # type: ignore[assignment]
+                metric_exporter = ConsoleMetricExporter()
             else:
-                metric_exporter = None  # type: ignore[assignment]
+                metric_exporter = None
 
             if metric_exporter is not None:
                 reader = PeriodicExportingMetricReader(
@@ -280,7 +278,9 @@ class Observability:
 
         with self._tracer.start_as_current_span(name) as active_span:
             for k, v in attributes.items():
-                active_span.set_attribute(k, str(v) if not isinstance(v, bool | int | float | str) else v)
+                active_span.set_attribute(
+                    k, str(v) if not isinstance(v, bool | int | float | str) else v
+                )
             yield active_span
 
     def record_invocation(

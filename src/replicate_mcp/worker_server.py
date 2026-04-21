@@ -184,7 +184,7 @@ class WorkerHttpApp:
 
 async def serve_worker(
     *,
-    host: str = "0.0.0.0",  # noqa: S104
+    host: str = "0.0.0.0",  # noqa: S104  # nosec B104
     port: int = 7999,
     api_token: str | None = None,
     node_id: str | None = None,
@@ -217,8 +217,7 @@ async def serve_worker(
         import uvicorn  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
-            "uvicorn is required to run a worker server. "
-            "Install it with: pip install uvicorn"
+            "uvicorn is required to run a worker server. " "Install it with: pip install uvicorn"
         ) from exc
 
     resolved_token = api_token or os.environ.get("REPLICATE_API_TOKEN", "")
