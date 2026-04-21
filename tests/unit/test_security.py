@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from replicate_mcp.security import (
@@ -72,6 +74,7 @@ class TestSecretMasker:
 
     def test_extra_patterns(self) -> None:
         import re
+
         masker = SecretMasker(extra_patterns=[re.compile(r"MY_SECRET_\w+")])
         result = masker.mask_string("value=MY_SECRET_abc123")
         assert "MY_SECRET_" not in result
@@ -101,9 +104,7 @@ class TestSecretManager:
         with pytest.raises(SecretNotFoundError):
             mgr.get_token()
 
-    def test_get_token_not_required_returns_empty(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_get_token_not_required_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
         mgr = SecretManager()
         assert mgr.get_token(required=False) == ""
@@ -131,6 +132,24 @@ class TestSecretManager:
     def test_validate_replicate_token_wrong_prefix(self) -> None:
         mgr = SecretManager()
         assert mgr.validate_replicate_token("s" + "A" * 38) is False
+
+    def test_get_token_from_keyring(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When env var is empty, token is fetched from keyring."""
+        monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+        mgr = SecretManager()
+        with patch("keyring.get_password", return_value="r" + "K" * 38):
+            token = mgr.get_token()
+        assert token == "r" + "K" * 38
+
+    def test_get_token_keyring_exception_falls_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When keyring raises, get_token falls through to SecretNotFoundError."""
+        monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+        mgr = SecretManager()
+        with patch("keyring.get_password", side_effect=RuntimeError("broken")):
+            with pytest.raises(SecretNotFoundError):
+                mgr.get_token()
 
 
 # ---------------------------------------------------------------------------
