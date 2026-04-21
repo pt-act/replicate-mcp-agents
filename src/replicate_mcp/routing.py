@@ -375,6 +375,55 @@ class CostAwareRouter:
         """The currently active selection strategy."""
         return self._strategy
 
+    def select_model_explain(self, candidates: list[str]) -> RoutingDecision:
+        """Select the best model and return a detailed explanation.
+
+        Like :meth:`select_model` but returns a :class:`RoutingDecision`
+        that captures *why* the model was chosen, including scores for
+        all candidates.
+
+        Args:
+            candidates: Model identifiers to choose from.
+
+        Returns:
+            A :class:`RoutingDecision` with the chosen model and scores.
+        """
+        if not candidates:
+            raise ValueError("candidates list must not be empty")
+        if len(candidates) == 1:
+            return RoutingDecision(
+                selected_model=candidates[0],
+                strategy=self._strategy,
+                scores={candidates[0]: 0.0},
+            )
+
+        if self._strategy == "thompson":
+            samples = {model: self._ensure_registered(model).thompson_sample()
+                       for model in candidates}
+            selected = max(samples, key=samples.__getitem__)
+            return RoutingDecision(
+                selected_model=selected,
+                strategy=self._strategy,
+                scores=samples,
+            )
+
+        # Score-based
+        w = self._weights
+        total_w = w.cost + w.latency + w.quality or 1.0
+        scores: dict[str, float] = {}
+        for model in candidates:
+            stats = self._ensure_registered(model)
+            cost_s = stats.ema_cost_usd
+            lat_s = stats.ema_latency_ms / 1_000.0
+            qual_s = 1.0 - stats.ema_quality
+            scores[model] = (w.cost * cost_s + w.latency * lat_s + w.quality * qual_s) / total_w
+        selected = min(scores, key=scores.__getitem__)  # type: ignore[arg-type]
+        return RoutingDecision(
+            selected_model=selected,
+            strategy=self._strategy,
+            scores=scores,
+        )
+
     def __repr__(self) -> str:
         return (
             f"CostAwareRouter(strategy={self._strategy!r}, "
@@ -382,8 +431,33 @@ class CostAwareRouter:
         )
 
 
+@dataclass
+class RoutingDecision:
+    """Explains *why* a model was selected by :meth:`CostAwareRouter.select_model_explain`.
+
+    Attributes:
+        selected_model: The model identifier that was chosen.
+        strategy:       The selection strategy used (``"score"`` or ``"thompson"``).
+        scores:         Per-model score / sample used for the decision.
+                        For ``"score"`` strategy these are weighted scores (lower = better).
+                        For ``"thompson"`` strategy these are Thompson samples (higher = better).
+    """
+
+    selected_model: str
+    strategy: str
+    scores: dict[str, float]
+
+    def __repr__(self) -> str:
+        return (
+            f"RoutingDecision(selected={self.selected_model!r}, "
+            f"strategy={self.strategy!r}, "
+            f"scores={self.scores})"
+        )
+
+
 __all__ = [
     "ModelStats",
     "RoutingWeights",
     "CostAwareRouter",
+    "RoutingDecision",
 ]

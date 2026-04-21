@@ -397,6 +397,50 @@ async def retry_iter(
     raise MaxRetriesExceededError(cfg.max_retries + 1, last_exc)
 
 
+# ---------------------------------------------------------------------------
+# Error classification helper
+# ---------------------------------------------------------------------------
+
+
+def is_retryable_error(
+    exc: BaseException,
+    config: RetryConfig | None = None,
+) -> bool:
+    """Classify *exc* as retryable or non-retryable.
+
+    Decision logic (in order):
+
+    1. :class:`~replicate_mcp.exceptions.NonRetryableError` (and subclasses)
+       are **never** retried, even if the exception type appears in
+       ``config.retryable_exceptions``.
+    2. :class:`~replicate_mcp.exceptions.RetryableError` (and subclasses)
+       are **always** retried, even if the exception type is not in
+       ``config.retryable_exceptions``.
+    3. Otherwise, *exc* is retried only if it is an instance of the
+       ``retryable_exceptions`` tuple from *config* (defaults to ``(Exception,)``).
+
+    Args:
+        exc:   The exception to classify.
+        config: Retry configuration; defaults apply if not supplied.
+
+    Returns:
+        ``True`` if the error should be retried, ``False`` otherwise.
+    """
+    from replicate_mcp.exceptions import NonRetryableError, RetryableError  # noqa: PLC0415
+
+    # NonRetryableError is never retried — even if in the tuple
+    if isinstance(exc, NonRetryableError):
+        return False
+
+    # RetryableError is always retried — even if not in the tuple
+    if isinstance(exc, RetryableError):
+        return True
+
+    # Fall through to the configured tuple
+    cfg = config or RetryConfig()
+    return isinstance(exc, tuple(cfg.retryable_exceptions))
+
+
 __all__ = [
     "CircuitState",
     "CircuitBreakerConfig",
@@ -407,4 +451,5 @@ __all__ = [
     "compute_retry_delay",
     "with_retry",
     "retry_iter",
+    "is_retryable_error",
 ]

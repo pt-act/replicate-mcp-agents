@@ -23,6 +23,11 @@ Submodules:
 """
 
 from replicate_mcp.plugins.base import BasePlugin, PluginError, PluginMetadata
+from replicate_mcp.plugins.builtin import (
+    ContentFilterPlugin,
+    CostCapPlugin,
+    PIIMaskPlugin,
+)
 from replicate_mcp.plugins.loader import load_plugins
 from replicate_mcp.plugins.registry import PluginRegistry
 
@@ -32,4 +37,8 @@ __all__ = [
     "PluginMetadata",
     "PluginRegistry",
     "load_plugins",
+    # Built-in guardrail plugins (Phase 6)
+    "PIIMaskPlugin",
+    "ContentFilterPlugin",
+    "CostCapPlugin",
 ]
