@@ -56,13 +56,15 @@ class PIIMaskPlugin(BasePlugin):
     def on_agent_run(
         self, agent_name: str, payload: dict[str, Any]
     ) -> dict[str, Any] | None:
-        return self._mask_payload(payload)
+        result = self._mask_payload(payload)
+        return result if result is not payload else None
 
     def on_agent_result(
         self, agent_name: str, chunks: list[dict[str, Any]], latency_ms: float
     ) -> list[dict[str, Any]] | None:
         masked = [self._mask_payload(c) for c in chunks]  # type: ignore[arg-type]
-        return masked if any(masked) else None
+        changed = any(m is not o for m, o in zip(masked, chunks))
+        return masked if changed else None
 
     # ---- private ----
 
