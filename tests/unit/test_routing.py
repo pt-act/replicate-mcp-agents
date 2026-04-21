@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
-from replicate_mcp.routing import CostAwareRouter, ModelStats, RoutingWeights
+from replicate_mcp.routing import (
+    CostAwareRouter,
+    ModelStats,
+    RoutingDecision,
+    RoutingWeights,
+)
 
 # ---------------------------------------------------------------------------
 # ModelStats
@@ -85,7 +92,9 @@ class TestRoutingWeights:
 
 class TestCostAwareRouterScore:
     def _make_router(self) -> CostAwareRouter:
-        return CostAwareRouter(strategy="score", weights=RoutingWeights(cost=1.0, latency=0.0, quality=0.0))
+        return CostAwareRouter(
+            strategy="score", weights=RoutingWeights(cost=1.0, latency=0.0, quality=0.0)
+        )
 
     def test_single_candidate_returned_immediately(self) -> None:
         r = self._make_router()
@@ -167,8 +176,7 @@ class TestCostAwareRouterThompson:
             r.record_outcome("bad/model", latency_ms=100, cost_usd=0.01, success=False)
 
         wins = sum(
-            1 for _ in range(200)
-            if r.select_model(["good/model", "bad/model"]) == "good/model"
+            1 for _ in range(200) if r.select_model(["good/model", "bad/model"]) == "good/model"
         )
         # Good model should win the vast majority of the time
         assert wins > 140
@@ -231,3 +239,185 @@ class TestSyncStats:
         # This should not raise AttributeError and should return a valid model
         chosen = router.select_model(["a/m", "b/m"])
         assert chosen in ("a/m", "b/m")
+
+
+# ---------------------------------------------------------------------------
+# RoutingDecision dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestRoutingDecision:
+    def test_attributes(self) -> None:
+        rd = RoutingDecision(
+            selected_model="a/model",
+            strategy="score",
+            scores={"a/model": 0.01, "b/model": 0.05},
+        )
+        assert rd.selected_model == "a/model"
+        assert rd.strategy == "score"
+        assert rd.scores["a/model"] == pytest.approx(0.01)
+        assert rd.scores["b/model"] == pytest.approx(0.05)
+
+    def test_repr(self) -> None:
+        rd = RoutingDecision(
+            selected_model="a/model",
+            strategy="thompson",
+            scores={"a/model": 0.9},
+        )
+        r = repr(rd)
+        assert "RoutingDecision" in r
+        assert "a/model" in r
+        assert "thompson" in r
+        assert "0.9" in r
+
+    def test_repr_with_multiple_scores(self) -> None:
+        rd = RoutingDecision(
+            selected_model="x/m",
+            strategy="score",
+            scores={"x/m": 0.1, "y/m": 0.5, "z/m": 0.8},
+        )
+        r = repr(rd)
+        assert "RoutingDecision" in r
+        assert "x/m" in r
+
+
+# ---------------------------------------------------------------------------
+# CostAwareRouter.select_model_explain() — score strategy
+# ---------------------------------------------------------------------------
+
+
+class TestSelectModelExplainScore:
+    def _make_router(self) -> CostAwareRouter:
+        return CostAwareRouter(
+            strategy="score",
+            weights=RoutingWeights(cost=1.0, latency=0.0, quality=0.0),
+        )
+
+    def test_empty_candidates_raises(self) -> None:
+        r = self._make_router()
+        with pytest.raises(ValueError, match="empty"):
+            r.select_model_explain([])
+
+    def test_single_candidate_returns_decision(self) -> None:
+        r = self._make_router()
+        rd = r.select_model_explain(["only/model"])
+        assert isinstance(rd, RoutingDecision)
+        assert rd.selected_model == "only/model"
+        assert rd.strategy == "score"
+        assert rd.scores == {"only/model": 0.0}
+
+    def test_cheaper_model_selected_with_scores(self) -> None:
+        r = self._make_router()
+        r.register_model("expensive/model", initial_cost=0.10)
+        r.register_model("cheap/model", initial_cost=0.001)
+        rd = r.select_model_explain(["expensive/model", "cheap/model"])
+        assert rd.selected_model == "cheap/model"
+        assert rd.strategy == "score"
+        # Score is cost-weighted — cheap should have a lower score
+        assert rd.scores["cheap/model"] < rd.scores["expensive/model"]
+
+    def test_scores_include_all_candidates(self) -> None:
+        r = self._make_router()
+        r.register_model("a/m", initial_cost=0.01)
+        r.register_model("b/m", initial_cost=0.02)
+        r.register_model("c/m", initial_cost=0.03)
+        rd = r.select_model_explain(["a/m", "b/m", "c/m"])
+        assert len(rd.scores) == 3
+        assert "a/m" in rd.scores
+        assert "b/m" in rd.scores
+        assert "c/m" in rd.scores
+
+    def test_auto_registers_unknown_models(self) -> None:
+        r = self._make_router()
+        rd = r.select_model_explain(["new/a", "new/b"])
+        assert rd.selected_model in ("new/a", "new/b")
+        assert len(rd.scores) == 2
+
+    def test_latency_and_quality_weighted(self) -> None:
+        """With balanced weights, lower-latency + higher-quality model wins."""
+        r = CostAwareRouter(
+            strategy="score",
+            weights=RoutingWeights(cost=0.0, latency=0.5, quality=0.5),
+        )
+        r.register_model("fast/good", initial_latency_ms=500, initial_quality=0.95)
+        r.register_model("slow/bad", initial_latency_ms=5000, initial_quality=0.5)
+        rd = r.select_model_explain(["fast/good", "slow/bad"])
+        assert rd.selected_model == "fast/good"
+        assert rd.scores["fast/good"] < rd.scores["slow/bad"]
+
+    def test_zero_total_weight_uses_denominator_guard(self) -> None:
+        """When all weights are 0, total_w falls back to 1.0."""
+        r = CostAwareRouter(
+            strategy="score",
+            weights=RoutingWeights(cost=0.0, latency=0.0, quality=0.0),
+        )
+        r.register_model("x/m")
+        r.register_model("y/m")
+        rd = r.select_model_explain(["x/m", "y/m"])
+        assert rd.selected_model in ("x/m", "y/m")
+        # Verify no inf/nan from divide-by-zero
+        assert all(math.isfinite(v) for v in rd.scores.values())
+
+
+# ---------------------------------------------------------------------------
+# CostAwareRouter.select_model_explain() — thompson strategy
+# ---------------------------------------------------------------------------
+
+
+class TestSelectModelExplainThompson:
+    def _make_router(self) -> CostAwareRouter:
+        return CostAwareRouter(strategy="thompson")
+
+    def test_empty_candidates_raises(self) -> None:
+        r = self._make_router()
+        with pytest.raises(ValueError, match="empty"):
+            r.select_model_explain([])
+
+    def test_single_candidate_returns_decision(self) -> None:
+        r = self._make_router()
+        rd = r.select_model_explain(["only/model"])
+        assert isinstance(rd, RoutingDecision)
+        assert rd.selected_model == "only/model"
+        assert rd.strategy == "thompson"
+        assert rd.scores == {"only/model": 0.0}
+
+    def test_returns_routing_decision_with_scores(self) -> None:
+        r = self._make_router()
+        rd = r.select_model_explain(["a/model", "b/model"])
+        assert isinstance(rd, RoutingDecision)
+        assert rd.selected_model in ("a/model", "b/model")
+        assert rd.strategy == "thompson"
+        assert len(rd.scores) == 2
+        # Thompson samples are in [0, 1]
+        for score in rd.scores.values():
+            assert 0.0 <= score <= 1.0
+
+    def test_selected_model_has_highest_sample(self) -> None:
+        """The model with the highest Thompson sample should be selected."""
+        r = self._make_router()
+        rd = r.select_model_explain(["a/m", "b/m", "c/m"])
+        best_score = max(rd.scores.values())
+        assert rd.scores[rd.selected_model] == pytest.approx(best_score)
+
+    def test_thompson_favours_high_success_model(self) -> None:
+        """After many successes, the good model should win most explain calls."""
+        r = self._make_router()
+        r.register_model("good/model")
+        r.register_model("bad/model")
+        for _ in range(50):
+            r.record_outcome("good/model", latency_ms=100, cost_usd=0.01, success=True)
+        for _ in range(50):
+            r.record_outcome("bad/model", latency_ms=100, cost_usd=0.01, success=False)
+
+        wins = sum(
+            1
+            for _ in range(200)
+            if r.select_model_explain(["good/model", "bad/model"]).selected_model == "good/model"
+        )
+        assert wins > 140
+
+    def test_auto_registers_unknown_models(self) -> None:
+        r = self._make_router()
+        rd = r.select_model_explain(["unseen/a", "unseen/b"])
+        assert rd.selected_model in ("unseen/a", "unseen/b")
+        assert len(rd.scores) == 2
