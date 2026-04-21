@@ -195,3 +195,15 @@ class TestSafeEvalShorthand:
     def test_blocks_dangerous(self) -> None:
         with pytest.raises(UnsafeExpressionError):
             safe_eval("__import__('os')")
+
+
+class TestSafeEvaluatorExtraBuiltins:
+    """Cover the extra_builtins path in SafeEvaluator.__init__ (line 270)."""
+
+    def test_extra_builtins_available(self) -> None:
+        ev = SafeEvaluator(extra_builtins={"double": lambda x: x * 2})
+        assert ev.evaluate("double(5)") == 10
+
+    def test_extra_builtins_override_default(self) -> None:
+        ev = SafeEvaluator(extra_builtins={"max": lambda *args: 999})
+        assert ev.evaluate("max(1, 2, 3)") == 999
