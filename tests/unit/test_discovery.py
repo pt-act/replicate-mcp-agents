@@ -161,7 +161,8 @@ class TestModelDiscoveryFreshness:
         assert not disc.is_fresh()
         assert disc.last_result is None
 
-    def test_fresh_after_refresh(self) -> None:
+    @pytest.mark.asyncio
+    async def test_fresh_after_refresh(self) -> None:
         # Patch _fetch_and_register to avoid real API call
         disc = ModelDiscovery(AgentRegistry(), DiscoveryConfig(ttl_seconds=300))
 
@@ -170,15 +171,13 @@ class TestModelDiscoveryFreshness:
 
         disc._fetch_and_register = _fake_fetch  # type: ignore[method-assign]
 
-        async def run() -> None:
-            await disc.refresh()
-            assert disc.is_fresh()
-            assert disc.last_result is not None
-            assert disc.last_result.discovered == 1
+        await disc.refresh()
+        assert disc.is_fresh()
+        assert disc.last_result is not None
+        assert disc.last_result.discovered == 1
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_cached_result_returned_on_second_call(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cached_result_returned_on_second_call(self) -> None:
         disc = ModelDiscovery(AgentRegistry(), DiscoveryConfig(ttl_seconds=300))
         call_count = 0
 
@@ -189,13 +188,10 @@ class TestModelDiscoveryFreshness:
 
         disc._fetch_and_register = _fake_fetch  # type: ignore[method-assign]
 
-        async def run() -> None:
-            r1 = await disc.refresh()
-            r2 = await disc.refresh()  # should use cache
-            assert call_count == 1
-            assert r1.discovered == r2.discovered
-
-        asyncio.get_event_loop().run_until_complete(run())
+        r1 = await disc.refresh()
+        r2 = await disc.refresh()  # should use cache
+        assert call_count == 1
+        assert r1.discovered == r2.discovered
 
 
 # ---------------------------------------------------------------------------
@@ -210,65 +206,58 @@ class TestModelDiscoveryRefresh:
     def teardown_method(self) -> None:
         _remove_fake_replicate()
 
-    def test_refresh_registers_models(self) -> None:
+    @pytest.mark.asyncio
+    async def test_refresh_registers_models(self) -> None:
         models = [_make_model("meta", "llama"), _make_model("mistral", "mixtral")]
         _install_fake_replicate(models)
 
         reg = AgentRegistry()
         disc = ModelDiscovery(reg, DiscoveryConfig(ttl_seconds=0))
 
-        async def run() -> None:
-            result = await disc.refresh()
-            assert result.registered == 2
-            assert result.discovered == 2
-            assert result.errors == []
+        result = await disc.refresh()
+        assert result.registered == 2
+        assert result.discovered == 2
+        assert result.errors == []
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_refresh_respects_max_models(self) -> None:
+    @pytest.mark.asyncio
+    async def test_refresh_respects_max_models(self) -> None:
         models = [_make_model("m", f"model{i}") for i in range(10)]
         _install_fake_replicate(models)
 
         reg = AgentRegistry()
         disc = ModelDiscovery(reg, DiscoveryConfig(max_models=3, ttl_seconds=0))
 
-        async def run() -> None:
-            result = await disc.refresh()
-            assert result.discovered == 3
+        result = await disc.refresh()
+        assert result.discovered == 3
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_refresh_updates_existing(self) -> None:
+    @pytest.mark.asyncio
+    async def test_refresh_updates_existing(self) -> None:
         models = [_make_model("meta", "llama")]
         _install_fake_replicate(models)
 
         reg = AgentRegistry()
         disc = ModelDiscovery(reg, DiscoveryConfig(ttl_seconds=0))
 
-        async def run() -> None:
-            await disc.refresh()
-            _install_fake_replicate(models)
-            disc._last_refresh = 0.0  # force refresh
-            disc._last_result = None
-            result = await disc.refresh()
-            assert result.updated == 1
+        await disc.refresh()
+        _install_fake_replicate(models)
+        disc._last_refresh = 0.0  # force refresh
+        disc._last_result = None
+        result = await disc.refresh()
+        assert result.updated == 1
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_refresh_without_replicate_returns_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_refresh_without_replicate_returns_error(self) -> None:
         import sys
         sys.modules.pop("replicate", None)
 
         reg = AgentRegistry()
         disc = ModelDiscovery(reg, DiscoveryConfig(ttl_seconds=0))
 
-        async def run() -> None:
-            result = await disc.refresh()
-            assert len(result.errors) > 0
+        result = await disc.refresh()
+        assert len(result.errors) > 0
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_refresh_api_failure_records_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_refresh_api_failure_records_error(self) -> None:
         fake = ModuleType("replicate")
         mock_client_cls = MagicMock()
         mock_client = MagicMock()
@@ -281,11 +270,8 @@ class TestModelDiscoveryRefresh:
         reg = AgentRegistry()
         disc = ModelDiscovery(reg, DiscoveryConfig(ttl_seconds=0))
 
-        async def run() -> None:
-            result = await disc.refresh()
-            assert len(result.errors) > 0
-
-        asyncio.get_event_loop().run_until_complete(run())
+        result = await disc.refresh()
+        assert len(result.errors) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +280,8 @@ class TestModelDiscoveryRefresh:
 
 
 class TestBackgroundRefresh:
-    def test_start_and_stop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_start_and_stop(self) -> None:
         disc = ModelDiscovery(AgentRegistry(), DiscoveryConfig(
             ttl_seconds=0,
             background_interval_seconds=0.05,
@@ -305,22 +292,20 @@ class TestBackgroundRefresh:
 
         disc._fetch_and_register = _fake_fetch  # type: ignore[method-assign]
 
-        async def run() -> None:
-            task = disc.start_background_refresh()
-            assert not task.done()
-            await asyncio.sleep(0.12)
-            disc.stop_background_refresh()
-            # Should have refreshed at least once
-            assert disc.last_result is not None
-
-        asyncio.get_event_loop().run_until_complete(run())
+        task = disc.start_background_refresh()
+        assert not task.done()
+        await asyncio.sleep(0.12)
+        disc.stop_background_refresh()
+        # Should have refreshed at least once
+        assert disc.last_result is not None
 
     def test_start_raises_when_interval_zero(self) -> None:
         disc = ModelDiscovery(AgentRegistry(), DiscoveryConfig(background_interval_seconds=0))
         with pytest.raises(ValueError, match="background_interval_seconds"):
             disc.start_background_refresh()
 
-    def test_start_returns_same_task_if_running(self) -> None:
+    @pytest.mark.asyncio
+    async def test_start_returns_same_task_if_running(self) -> None:
         disc = ModelDiscovery(AgentRegistry(), DiscoveryConfig(
             ttl_seconds=0,
             background_interval_seconds=0.1,
@@ -331,13 +316,10 @@ class TestBackgroundRefresh:
 
         disc._fetch_and_register = _fake_fetch  # type: ignore[method-assign]
 
-        async def run() -> None:
-            t1 = disc.start_background_refresh()
-            t2 = disc.start_background_refresh()
-            assert t1 is t2
-            disc.stop_background_refresh()
-
-        asyncio.get_event_loop().run_until_complete(run())
+        t1 = disc.start_background_refresh()
+        t2 = disc.start_background_refresh()
+        assert t1 is t2
+        disc.stop_background_refresh()
 
     def test_stop_noop_when_not_running(self) -> None:
         disc = ModelDiscovery(AgentRegistry())
@@ -356,25 +338,21 @@ class TestDiscoverAndRegister:
     def teardown_method(self) -> None:
         _remove_fake_replicate()
 
-    def test_creates_registry_when_none(self) -> None:
+    @pytest.mark.asyncio
+    async def test_creates_registry_when_none(self) -> None:
         import sys
         sys.modules.pop("replicate", None)
 
-        async def run() -> None:
-            reg, result = await discover_and_register()
-            assert isinstance(reg, AgentRegistry)
-            assert len(result.errors) > 0  # no replicate installed
+        reg, result = await discover_and_register()
+        assert isinstance(reg, AgentRegistry)
+        assert len(result.errors) > 0  # no replicate installed
 
-        asyncio.get_event_loop().run_until_complete(run())
-
-    def test_uses_provided_registry(self) -> None:
+    @pytest.mark.asyncio
+    async def test_uses_provided_registry(self) -> None:
         import sys
         sys.modules.pop("replicate", None)
 
         existing = AgentRegistry()
 
-        async def run() -> None:
-            reg, _ = await discover_and_register(registry=existing)
-            assert reg is existing
-
-        asyncio.get_event_loop().run_until_complete(run())
+        reg, _ = await discover_and_register(registry=existing)
+        assert reg is existing
