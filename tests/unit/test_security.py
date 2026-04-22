@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import sys
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -137,7 +138,9 @@ class TestSecretManager:
         """When env var is empty, token is fetched from keyring."""
         monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
         mgr = SecretManager()
-        with patch("keyring.get_password", return_value="r" + "K" * 38):
+        mock_kr = MagicMock()
+        mock_kr.get_password.return_value = "r" + "K" * 38
+        with patch.dict(sys.modules, {"keyring": mock_kr}):
             token = mgr.get_token()
         assert token == "r" + "K" * 38
 
@@ -147,7 +150,9 @@ class TestSecretManager:
         """When keyring raises, get_token falls through to SecretNotFoundError."""
         monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
         mgr = SecretManager()
-        with patch("keyring.get_password", side_effect=RuntimeError("broken")):
+        mock_kr = MagicMock()
+        mock_kr.get_password.side_effect = RuntimeError("broken")
+        with patch.dict(sys.modules, {"keyring": mock_kr}):
             with pytest.raises(SecretNotFoundError):
                 mgr.get_token()
 
