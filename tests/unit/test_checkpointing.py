@@ -118,3 +118,44 @@ class TestCheckpointManager:
         ckpt.save("clean", {"ok": True})
         tmp_files = list(ckpt.base_path.glob(".*"))
         assert len(tmp_files) == 0
+
+    def test_atomic_write_cleanup_on_failure(self, ckpt: CheckpointManager) -> None:
+        """When json.dump raises, the temp file is cleaned up."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        with patch("json.dump", side_effect=RuntimeError("disk full")):
+            with pytest.raises(RuntimeError, match="disk full"):
+                ckpt.save("fail", {"x": 1})
+        # No checkpoint file should exist, and no temp files left
+        assert not ckpt.exists("fail")
+        tmp_files = list(ckpt.base_path.glob(".*"))
+        assert len(tmp_files) == 0
+
+    def test_load_flat_format_backward_compat(self, ckpt: CheckpointManager) -> None:
+        """When the saved file has no _meta/state envelope, load returns raw dict."""
+        # Write a flat JSON file (old format) directly
+        flat_path = ckpt.base_path / "legacy.json"
+        flat_path.write_text(json.dumps({"step": 3, "data": "old"}))
+        loaded = ckpt.load("legacy")
+        assert loaded == {"step": 3, "data": "old"}
+
+    def test_atomic_unlink_oserror_suppressed(self, ckpt: CheckpointManager) -> None:
+        """When os.unlink also raises OSError during cleanup, it is suppressed."""
+        import os
+        from unittest.mock import patch  # noqa: PLC0415
+
+        real_unlink = os.unlink
+        call_count = 0
+
+        def _unlink_and_fail(path: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            real_unlink(path)  # actually delete
+            raise OSError("permission denied")
+
+        with patch("json.dump", side_effect=RuntimeError("write fail")):
+            with patch("os.unlink", side_effect=_unlink_and_fail):
+                with pytest.raises(RuntimeError, match="write fail"):
+                    ckpt.save("unlink-err", {"x": 1})
+        # os.unlink was called and raised OSError, but the original error propagated
+        assert call_count >= 1

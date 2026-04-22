@@ -89,7 +89,7 @@ class TestRouterDumpLoad:
         assert restored["a/llama"].invocation_count == 2
         assert restored["a/llama"].success_count == 1
         assert restored["a/llama"].ts_alpha == pytest.approx(2.0)  # 1 + 1 success
-        assert restored["a/llama"].ts_beta == pytest.approx(2.0)   # 1 + 1 failure
+        assert restored["a/llama"].ts_beta == pytest.approx(2.0)  # 1 + 1 failure
 
     def test_load_state_does_not_remove_unmentioned_models(self) -> None:
         router = CostAwareRouter()
@@ -254,3 +254,74 @@ class TestAutoSave:
 
         asyncio.run(_run())
         assert path.exists()
+
+    def test_auto_save_background_exception_is_caught(self, tmp_path: Path) -> None:
+        """Exception in background save loop is logged, not raised."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        path = tmp_path / "bg-err.json"
+        manager = RouterStateManager(path=path)
+        router = CostAwareRouter()
+
+        async def _run() -> None:
+            with patch.object(manager, "save_router", side_effect=OSError("write failed")):
+                async with manager.auto_save(router, interval_s=0.05, save_on_exit=False):
+                    await asyncio.sleep(0.15)  # let the loop fire
+
+        # Should not raise
+        asyncio.run(_run())
+
+    def test_auto_save_final_save_exception_is_caught(self, tmp_path: Path) -> None:
+        """Exception in final save-on-exit is logged, not raised."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        path = tmp_path / "final-err.json"
+        manager = RouterStateManager(path=path)
+        router = CostAwareRouter()
+
+        async def _run() -> None:
+            with patch.object(manager, "save_router", side_effect=OSError("write failed")):
+                async with manager.auto_save(router, interval_s=1000.0, save_on_exit=True):
+                    pass
+
+        # Should not raise even though final save fails
+        asyncio.run(_run())
+        assert not path.exists()  # save never succeeded
+
+    def test_save_atomic_cleanup_on_failure(self, tmp_path: Path) -> None:
+        """When save_router fails mid-write, temp file is cleaned up."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        path = tmp_path / "fail.json"
+        manager = RouterStateManager(path=path)
+        router = CostAwareRouter()
+
+        with patch("json.dump", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                manager.save_router(router)
+        # No state file should exist
+        assert not path.exists()
+
+    def test_save_unlink_oserror_suppressed(self, tmp_path: Path) -> None:
+        """When os.unlink raises OSError during cleanup, it is suppressed."""
+        import os
+        from unittest.mock import patch  # noqa: PLC0415
+
+        path = tmp_path / "unlink-err.json"
+        manager = RouterStateManager(path=path)
+        router = CostAwareRouter()
+
+        real_unlink = os.unlink
+        call_count = 0
+
+        def _unlink_and_fail(p: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            real_unlink(p)
+            raise OSError("permission denied")
+
+        with patch("json.dump", side_effect=RuntimeError("write fail")):
+            with patch("os.unlink", side_effect=_unlink_and_fail):
+                with pytest.raises(RuntimeError, match="write fail"):
+                    manager.save_router(router)
+        assert call_count >= 1
