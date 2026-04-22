@@ -13,6 +13,9 @@ permissions:
   contents: read
   security-events: write   # for uploading SARIF results
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ---------------------------------------------------------------------------
   # pip-audit — known CVE check against all dependencies
@@ -59,7 +62,7 @@ jobs:
             -f sarif \
             -o bandit-results.sarif || true
       - name: Upload Bandit SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: bandit-results.sarif
