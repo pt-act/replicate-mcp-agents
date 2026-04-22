@@ -421,3 +421,122 @@ class TestSelectModelExplainThompson:
         rd = r.select_model_explain(["unseen/a", "unseen/b"])
         assert rd.selected_model in ("unseen/a", "unseen/b")
         assert len(rd.scores) == 2
+
+
+# ---------------------------------------------------------------------------
+# dump_state / load_state — persistence helpers
+# ---------------------------------------------------------------------------
+
+
+class TestDumpState:
+    """Cover CostAwareRouter.dump_state() — serialises all per-model stats."""
+
+    def test_dump_state_returns_dict(self) -> None:
+        r = CostAwareRouter(strategy="score")
+        r.register_model("a/model", initial_cost=0.01, initial_latency_ms=1000)
+        r.register_model("b/model", initial_cost=0.02, initial_latency_ms=2000)
+        state = r.dump_state()
+        assert isinstance(state, dict)
+        assert set(state.keys()) == {"a/model", "b/model"}
+
+    def test_dump_state_values_are_dicts(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("x/m", initial_cost=0.005)
+        state = r.dump_state()
+        raw = state["x/m"]
+        assert isinstance(raw, dict)
+        assert raw["model"] == "x/m"
+        assert "ema_cost_usd" in raw
+        assert "ema_latency_ms" in raw
+        assert "ts_alpha" in raw
+
+    def test_dump_state_empty_router(self) -> None:
+        r = CostAwareRouter()
+        state = r.dump_state()
+        assert state == {}
+
+    def test_dump_state_reflects_recorded_outcomes(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("m1", initial_cost=0.01)
+        r.record_outcome("m1", latency_ms=500, cost_usd=0.001, success=True)
+        state = r.dump_state()
+        assert state["m1"]["invocation_count"] == 1
+        assert state["m1"]["success_count"] == 1
+
+
+class TestLoadState:
+    """Cover CostAwareRouter.load_state() — restores stats from a dict."""
+
+    def test_load_state_restores_models(self) -> None:
+        r1 = CostAwareRouter()
+        r1.register_model("a/m", initial_cost=0.01)
+        r1.record_outcome("a/m", latency_ms=500, cost_usd=0.001, success=True)
+        state = r1.dump_state()
+
+        r2 = CostAwareRouter()
+        r2.load_state(state)
+        stats = r2.stats()["a/m"]
+        assert stats.invocation_count == 1
+        assert stats.ema_cost_usd < 0.01
+
+    def test_load_state_overwrites_existing(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("x/m", initial_cost=0.10)
+        # Manually build state with different cost
+        from replicate_mcp.utils.router_state import serialise_stats  # noqa: PLC0415
+
+        alt_stats = ModelStats(model="x/m", ema_cost_usd=0.001)
+        r.load_state({"x/m": serialise_stats(alt_stats)})
+        assert r.stats()["x/m"].ema_cost_usd == pytest.approx(0.001)
+
+    def test_load_state_preserves_models_not_in_data(self) -> None:
+        r = CostAwareRouter()
+        r.register_model("keep/m", initial_cost=0.05)
+        r.load_state({})  # empty data
+        assert "keep/m" in r.stats()
+
+    def test_load_state_invalid_entry_logged_and_skipped(self) -> None:
+        """Entries that raise TypeError/KeyError during deserialise are skipped."""
+        r = CostAwareRouter()
+        # Pass a dict with a missing required field ("model")
+        r.load_state({"bad/m": {"ema_cost_usd": 0.01}})
+        # The bad entry should NOT appear in stats (deserialise_stats
+        # raises TypeError because model is missing)
+        assert "bad/m" not in r.stats()
+
+    def test_load_state_unknown_keys_ignored(self) -> None:
+        """Forward-compatible: unknown keys in the raw dict are silently dropped."""
+        from replicate_mcp.utils.router_state import serialise_stats  # noqa: PLC0415
+
+        r = CostAwareRouter()
+        raw = serialise_stats(ModelStats(model="f/m", ema_cost_usd=0.01))
+        raw["future_field"] = 42  # unknown key
+        r.load_state({"f/m": raw})
+        assert "f/m" in r.stats()
+        assert r.stats()["f/m"].ema_cost_usd == pytest.approx(0.01)
+
+    def test_round_trip_dump_load(self) -> None:
+        """Full round-trip: dump → load preserves all stats."""
+        r1 = CostAwareRouter(strategy="thompson")
+        r1.register_model("m1", initial_cost=0.01, initial_latency_ms=1000)
+        r1.register_model("m2", initial_cost=0.02, initial_latency_ms=2000)
+        for _ in range(5):
+            r1.record_outcome("m1", latency_ms=800, cost_usd=0.008, success=True)
+        for _ in range(3):
+            r1.record_outcome("m2", latency_ms=3000, cost_usd=0.025, success=False)
+
+        state = r1.dump_state()
+
+        r2 = CostAwareRouter(strategy="thompson")
+        r2.load_state(state)
+
+        s1_orig = r1.stats()
+        s2_rest = r2.stats()
+        for model in ("m1", "m2"):
+            orig = s1_orig[model]
+            rest = s2_rest[model]
+            assert rest.invocation_count == orig.invocation_count
+            assert rest.ema_cost_usd == pytest.approx(orig.ema_cost_usd)
+            assert rest.ema_latency_ms == pytest.approx(orig.ema_latency_ms)
+            assert rest.ts_alpha == pytest.approx(orig.ts_alpha)
+            assert rest.ts_beta == pytest.approx(orig.ts_beta)

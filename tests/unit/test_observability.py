@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
+from typing import Any
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from replicate_mcp.observability import (
     Observability,
     ObservabilityConfig,
+    _NullSpan,
     default_observability,
 )
 
@@ -100,6 +105,425 @@ class TestObservabilityNoOp:
         obs = self._obs()
         with obs.span("test", count=42, flag=True, score=0.95) as span:
             span.set_attribute("extra", "val")
+
+
+# ---------------------------------------------------------------------------
+# _NullSpan context manager protocol
+# ---------------------------------------------------------------------------
+
+
+class TestNullSpanContextManager:
+    """Cover _NullSpan.__enter__ and __exit__ directly."""
+
+    def test_enter_returns_self(self) -> None:
+        span = _NullSpan()
+        with span as s:
+            assert s is span
+
+    def test_exit_returns_none(self) -> None:
+        exc_info = (ValueError, ValueError("x"), None)
+        result = _NullSpan().__exit__(*exc_info)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Observability setup with OTEL SDK available
+# ---------------------------------------------------------------------------
+
+
+class TestObservabilitySetupWithOTEL:
+    """Cover the real setup() paths when OTEL SDK is installed."""
+
+    def test_setup_sets_is_setup(self) -> None:
+        obs = Observability()
+        obs.setup()
+        assert obs.is_setup is True
+
+    def test_setup_creates_tracer(self) -> None:
+        obs = Observability()
+        obs.setup()
+        assert obs._tracer is not None
+
+    def test_setup_creates_meter_and_instruments(self) -> None:
+        obs = Observability()
+        obs.setup()
+        assert obs._meter is not None
+        assert "invocation.count" in obs._counters
+        assert "error.count" in obs._counters
+        assert "circuit_breaker.trips" in obs._counters
+        assert "invocation.latency" in obs._histograms
+        assert "invocation.cost" in obs._histograms
+
+    def test_setup_with_traces_disabled(self) -> None:
+        cfg = ObservabilityConfig(enable_traces=False)
+        obs = Observability(cfg)
+        obs.setup()
+        assert obs._tracer is None
+        assert obs._meter is not None
+
+    def test_setup_with_metrics_disabled(self) -> None:
+        cfg = ObservabilityConfig(enable_metrics=False)
+        obs = Observability(cfg)
+        obs.setup()
+        assert obs._tracer is not None
+        assert obs._meter is None
+
+    def test_setup_with_both_disabled(self) -> None:
+        cfg = ObservabilityConfig(enable_traces=False, enable_metrics=False)
+        obs = Observability(cfg)
+        obs.setup()
+        assert obs._tracer is None
+        assert obs._meter is None
+
+    def test_setup_idempotent_with_otel(self) -> None:
+        obs = Observability()
+        obs.setup()
+        tracer_before = obs._tracer
+        obs.setup()  # second call should be no-op
+        assert obs._tracer is tracer_before
+
+    def test_setup_uses_otlp_endpoint_from_config(self) -> None:
+        cfg = ObservabilityConfig(otlp_endpoint="http://custom:4317")
+        obs = Observability(cfg)
+        obs.setup()
+        assert obs.is_setup is True
+
+    def test_setup_uses_otlp_endpoint_from_env(self) -> None:
+        with patch.dict("os.environ", {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://env:4317"}):
+            cfg = ObservabilityConfig(otlp_endpoint=None)
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs.is_setup is True
+
+
+# ---------------------------------------------------------------------------
+# Span with real tracer (lines 279-284)
+# ---------------------------------------------------------------------------
+
+
+class TestSpanWithRealTracer:
+    """Cover the real span path when OTEL is set up."""
+
+    def test_span_with_real_tracer(self) -> None:
+        obs = Observability()
+        obs.setup()
+        with obs.span("test.span", model="meta/llama") as span:
+            # Real OTEL span — set_attribute should work
+            span.set_attribute("key", "value")
+
+    def test_span_attribute_type_coercion(self) -> None:
+        """Non-primitive attribute values are coerced to str."""
+        obs = Observability()
+        obs.setup()
+        with obs.span("test", obj={"a": 1}, lst=[1, 2]) as span:
+            # {"a": 1} and [1, 2] should be converted to str
+            span.set_attribute("extra", "val")
+
+    def test_span_with_primitive_attributes(self) -> None:
+        """Primitive types (bool, int, float, str) are passed through."""
+        obs = Observability()
+        obs.setup()
+        with obs.span("test", count=42, flag=True, score=0.95, label="hello") as span:
+            span.set_attribute("extra", "val")
+
+
+# ---------------------------------------------------------------------------
+# _init_instruments with None meter (line 225)
+# ---------------------------------------------------------------------------
+
+
+class TestInitInstruments:
+    """Cover _init_instruments early return when _meter is None."""
+
+    def test_init_instruments_no_meter(self) -> None:
+        obs = Observability()
+        assert obs._meter is None
+        obs._init_instruments()
+        # Should not create any instruments
+        assert len(obs._counters) == 0
+        assert len(obs._histograms) == 0
+
+
+# ---------------------------------------------------------------------------
+# _counter_add / _histogram_record with real instruments and exceptions
+# (lines 337-340, 350-353)
+# ---------------------------------------------------------------------------
+
+
+class TestCounterAndHistogramInternals:
+    """Cover _counter_add and _histogram_record paths."""
+
+    def test_counter_add_with_real_instrument(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs._counter_add("invocation.count", 1, {"model": "test"})
+        # Should not raise
+
+    def test_counter_add_missing_counter(self) -> None:
+        obs = Observability()
+        obs._counter_add("nonexistent", 1, {})
+        # Should silently return
+
+    def test_counter_add_none_counter(self) -> None:
+        obs = Observability()
+        obs._counters["missing"] = None
+        obs._counter_add("missing", 1, {})
+        # Should silently return
+
+    def test_counter_add_exception_is_silenced(self) -> None:
+        obs = Observability()
+        bad_counter = MagicMock()
+        bad_counter.add.side_effect = RuntimeError("boom")
+        obs._counters["bad"] = bad_counter
+        obs._counter_add("bad", 1, {})
+        # Should not raise — exception is swallowed
+
+    def test_histogram_record_with_real_instrument(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs._histogram_record("invocation.latency", 100.0, {"model": "test"})
+        # Should not raise
+
+    def test_histogram_record_missing_histogram(self) -> None:
+        obs = Observability()
+        obs._histogram_record("nonexistent", 1.0, {})
+        # Should silently return
+
+    def test_histogram_record_none_histogram(self) -> None:
+        obs = Observability()
+        obs._histograms["missing"] = None
+        obs._histogram_record("missing", 1.0, {})
+        # Should silently return
+
+    def test_histogram_record_exception_is_silenced(self) -> None:
+        obs = Observability()
+        bad_histogram = MagicMock()
+        bad_histogram.record.side_effect = RuntimeError("boom")
+        obs._histograms["bad"] = bad_histogram
+        obs._histogram_record("bad", 1.0, {})
+        # Should not raise — exception is swallowed
+
+
+# ---------------------------------------------------------------------------
+# record_invocation with real instruments (success and failure)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordInvocationWithInstruments:
+    """Cover record_invocation / record_circuit_trip with real OTEL instruments."""
+
+    def test_record_invocation_success_with_instruments(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs.record_invocation(
+            model="meta/llama",
+            latency_ms=3200.0,
+            cost_usd=0.002,
+            success=True,
+        )
+
+    def test_record_invocation_failure_with_instruments(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs.record_invocation(
+            model="meta/llama",
+            latency_ms=500.0,
+            cost_usd=0.001,
+            success=False,
+            labels={"agent": "test"},
+        )
+
+    def test_record_circuit_trip_with_instruments(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs.record_circuit_trip("my-circuit")
+
+    def test_increment_counter_with_instruments(self) -> None:
+        obs = Observability()
+        obs.setup()
+        obs.increment_counter("invocation.count", 3, env="prod")
+
+
+# ---------------------------------------------------------------------------
+# setup() exception fallback paths (lines 182-188, 198-205)
+# ---------------------------------------------------------------------------
+
+
+class TestSetupExceptionFallbacks:
+    """Cover the except-Exception branches in setup() for traces and metrics."""
+
+    def test_span_exporter_exception_console_fallback(self) -> None:
+        """When OTLPSpanExporter raises, fall back to ConsoleSpanExporter."""
+        with patch(
+            "replicate_mcp.observability.OTLPSpanExporter",
+            side_effect=Exception("endpoint unreachable"),
+        ):
+            cfg = ObservabilityConfig(
+                console_fallback=True,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._tracer is not None
+
+    def test_span_exporter_exception_no_fallback(self) -> None:
+        """When OTLPSpanExporter raises and console_fallback=False, no span processor added."""
+        with patch(
+            "replicate_mcp.observability.OTLPSpanExporter",
+            side_effect=Exception("endpoint unreachable"),
+        ):
+            cfg = ObservabilityConfig(
+                console_fallback=False,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            # Tracer should still be set (provider is created even without processors)
+            assert obs._tracer is not None
+
+    def test_metric_exporter_exception_console_fallback(self) -> None:
+        """When OTLPMetricExporter raises, fall back to ConsoleMetricExporter."""
+        with patch(
+            "replicate_mcp.observability.OTLPMetricExporter",
+            side_effect=Exception("endpoint unreachable"),
+        ):
+            cfg = ObservabilityConfig(
+                console_fallback=True,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._meter is not None
+
+    def test_metric_exporter_exception_no_fallback(self) -> None:
+        """When OTLPMetricExporter raises and console_fallback=False, meter is None."""
+        with patch(
+            "replicate_mcp.observability.OTLPMetricExporter",
+            side_effect=Exception("endpoint unreachable"),
+        ):
+            cfg = ObservabilityConfig(
+                console_fallback=False,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._meter is None
+
+    def test_no_otlp_trace_console_fallback(self) -> None:
+        """When HAS_OTLP is False and console_fallback=True, traces use ConsoleSpanExporter."""
+        with patch("replicate_mcp.observability.HAS_OTLP", False):
+            cfg = ObservabilityConfig(
+                console_fallback=True,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._tracer is not None
+
+    def test_no_otlp_trace_no_fallback(self) -> None:
+        """When HAS_OTLP is False and console_fallback=False, tracer still set (no processor)."""
+        with patch("replicate_mcp.observability.HAS_OTLP", False):
+            cfg = ObservabilityConfig(
+                console_fallback=False,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._tracer is not None
+
+    def test_no_otlp_metric_console_fallback(self) -> None:
+        """When HAS_OTLP is False and console_fallback=True, metrics use ConsoleMetricExporter."""
+        with patch("replicate_mcp.observability.HAS_OTLP", False):
+            cfg = ObservabilityConfig(
+                console_fallback=True,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._meter is not None
+
+    def test_no_otlp_metric_no_fallback(self) -> None:
+        """When HAS_OTLP is False and console_fallback=False, metric_exporter is None."""
+        with patch("replicate_mcp.observability.HAS_OTLP", False):
+            cfg = ObservabilityConfig(
+                console_fallback=False,
+                otlp_endpoint="http://localhost:4317",
+            )
+            obs = Observability(cfg)
+            obs.setup()
+            assert obs._meter is None
+
+
+# ---------------------------------------------------------------------------
+# ImportError branches for HAS_OTEL=False and HAS_OTLP=False
+# (lines 65-66, 77-78)
+# ---------------------------------------------------------------------------
+
+
+class TestImportErrorBranches:
+    """Cover the ImportError fallback by blocking OTEL imports during reload."""
+
+    @staticmethod
+    def _blocking_import(prefix: str) -> Any:
+        """Return an __import__ wrapper that raises ImportError for *prefix*."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == prefix or name.startswith(prefix + "."):
+                raise ImportError(f"No module named '{name}'")
+            return real_import(name, *args, **kwargs)
+
+        return _import
+
+    def test_has_otel_false_when_sdk_missing(self) -> None:
+        """When opentelemetry-sdk is not importable, HAS_OTEL is False."""
+        import replicate_mcp.observability as obs_mod
+
+        with patch("builtins.__import__", self._blocking_import("opentelemetry")):
+            importlib.reload(obs_mod)
+            assert obs_mod.HAS_OTEL is False
+
+        # Restore real OTEL imports
+        importlib.reload(obs_mod)
+
+    def test_has_otlp_false_when_exporter_missing(self) -> None:
+        """When OTLP exporter is not importable, HAS_OTLP is False."""
+        # Block only the OTLP exporter; core OTEL must still import
+        import builtins
+
+        import replicate_mcp.observability as obs_mod
+
+        real_import = builtins.__import__
+
+        def _import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name.startswith("opentelemetry.exporter.otlp"):
+                raise ImportError(f"No module named '{name}'")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", _import):
+            importlib.reload(obs_mod)
+            assert obs_mod.HAS_OTLP is False
+            # HAS_OTEL should still be True since core SDK is available
+            assert obs_mod.HAS_OTEL is True
+
+        # Restore real OTEL imports
+        importlib.reload(obs_mod)
+
+    def test_setup_noop_when_otel_missing(self) -> None:
+        """When HAS_OTEL is False, setup() does nothing."""
+        import replicate_mcp.observability as obs_mod
+
+        with patch("builtins.__import__", self._blocking_import("opentelemetry")):
+            importlib.reload(obs_mod)
+            obs = obs_mod.Observability()
+            obs.setup()
+            assert obs._tracer is None
+            assert obs._meter is None
+
+        # Restore real OTEL imports
+        importlib.reload(obs_mod)
 
 
 # ---------------------------------------------------------------------------

@@ -40,9 +40,7 @@ class _GoodPlugin(BasePlugin):
     def teardown(self) -> None:
         self.teardown_called = True
 
-    def on_agent_run(
-        self, agent_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         self.runs.append(agent_name)
         return None  # pass-through: no transformation
 
@@ -94,9 +92,7 @@ class _FailingHooksPlugin(BasePlugin):
     def teardown(self) -> None:
         pass
 
-    def on_agent_run(
-        self, agent_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         raise RuntimeError("hook error")
 
     def on_agent_result(
@@ -254,6 +250,58 @@ class TestLoadPlugins:
         plugins = load_plugins(extra_classes=[FailInit, _GoodPlugin])
         assert len(plugins) == 1  # FailInit skipped, _GoodPlugin loaded
 
+    def test_entry_point_discovery(self) -> None:
+        """load_plugins discovers and instantiates plugins via entry points."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        ep = MagicMock()
+        ep.name = "good_ep"
+        ep.load.return_value = _GoodPlugin
+        with patch(
+            "replicate_mcp.plugins.loader.entry_points",
+            return_value=[ep],
+        ):
+            plugins = load_plugins(extra_classes=[])
+        assert len(plugins) == 1
+        assert plugins[0].name == "good_plugin"
+
+    def test_entry_point_skip_names(self) -> None:
+        """Plugins in skip_names are not loaded even if discovered."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        ep = MagicMock()
+        ep.name = "good_ep"
+        ep.load.return_value = _GoodPlugin
+        with patch(
+            "replicate_mcp.plugins.loader.entry_points",
+            return_value=[ep],
+        ):
+            plugins = load_plugins(skip_names={"good_ep"})
+        assert len(plugins) == 0
+
+    def test_entry_point_load_exception_skipped(self) -> None:
+        """Entry points that raise on load() are skipped with a warning."""
+        from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+        bad_ep = MagicMock()
+        bad_ep.name = "bad_ep"
+        bad_ep.load.side_effect = ImportError("missing")
+        with patch(
+            "replicate_mcp.plugins.loader.entry_points",
+            return_value=[bad_ep],
+        ):
+            plugins = load_plugins(extra_classes=[])
+        assert len(plugins) == 0
+
+    def test_logger_info_on_load(self, caplog: Any) -> None:
+        """load_plugins logs the number and names of loaded plugins."""
+        import logging  # noqa: PLC0415
+
+        with caplog.at_level(logging.INFO, logger="replicate_mcp.plugins.loader"):
+            load_plugins(extra_classes=[_GoodPlugin])
+        assert "Loaded 1 plugin" in caplog.text
+        assert "good_plugin" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # Loader — load_plugin_from_path
@@ -276,6 +324,15 @@ class TestLoadPluginFromPath:
     def test_instantiation_failure_raises(self) -> None:
         with pytest.raises(PluginError):
             load_plugin_from_path("replicate_mcp.plugins.base", "BasePlugin")
+
+    def test_successful_load(self) -> None:
+        """load_plugin_from_path returns an initialised plugin on success."""
+        # _GoodPlugin is defined in this module (tests.unit.test_plugins)
+        from replicate_mcp.plugins.builtin import PIIMaskPlugin  # noqa: PLC0415
+
+        plugin = load_plugin_from_path("replicate_mcp.plugins.builtin", "PIIMaskPlugin")
+        assert isinstance(plugin, PIIMaskPlugin)
+        assert plugin.name == "pii_mask"
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +490,7 @@ class _PayloadAugmentPlugin(BasePlugin):
     def teardown(self) -> None:
         pass
 
-    def on_agent_run(
-        self, agent_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         return {**payload, "system": "You are a helpful assistant."}
 
 
@@ -475,9 +530,7 @@ class _ChainPlugin(BasePlugin):
     def teardown(self) -> None:
         pass
 
-    def on_agent_run(
-        self, agent_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def on_agent_run(self, agent_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         markers = list(payload.get("markers", []))
         markers.append(self._marker)
         return {**payload, "markers": markers}

@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
+import sys
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 
 class TestServerModuleSingletons:
     """Test the module-level objects without invoking the MCP server."""
@@ -32,9 +40,9 @@ class TestServerModuleSingletons:
         agents = _registry.list_agents()
         routing_stats = _router.stats()
         for _name, meta in agents.items():
-            assert meta.replicate_model() in routing_stats, (
-                f"{meta.replicate_model()} not in router stats"
-            )
+            assert (
+                meta.replicate_model() in routing_stats
+            ), f"{meta.replicate_model()} not in router stats"
 
     def test_default_agent_metadata(self) -> None:
         from replicate_mcp.server import _registry
@@ -177,7 +185,6 @@ class TestBuildServerResources:
 
     def test_routing_leaderboard_resource_json(self) -> None:
         """routing://leaderboard should return a sorted JSON list."""
-        import json  # noqa: PLC0415
 
         from replicate_mcp.server import _router  # noqa: PLC0415
 
@@ -186,3 +193,189 @@ class TestBuildServerResources:
         parsed = json.loads(result)
         assert isinstance(parsed, list)
         assert all("model" in item for item in parsed)
+
+
+# ---------------------------------------------------------------------------
+# MCP tool handler — _handler inside _make_handler (lines 121-131)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPToolHandler:
+    """Cover the async _handler that runs inside _build_server."""
+
+    @pytest.mark.asyncio
+    async def test_handler_no_api_token(self) -> None:
+        """When REPLICATE_API_TOKEN is missing, handler returns error JSON."""
+        from replicate_mcp.server import _build_server  # noqa: PLC0415
+
+        mcp_server = _build_server()
+        # Extract the registered tool handler for llama3_chat
+        tools = mcp_server._tool_manager._tools  # type: ignore[attr-defined]
+        handler_fn = tools["llama3_chat"].fn  # type: ignore[attr-defined]
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = await handler_fn(prompt="hello")
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "REPLICATE_API_TOKEN" in parsed["error"]
+
+    @pytest.mark.asyncio
+    async def test_handler_with_api_token(self) -> None:
+        """When REPLICATE_API_TOKEN is set, handler runs the executor."""
+        from replicate_mcp.server import _build_server, _executor  # noqa: PLC0415
+
+        mcp_server = _build_server()
+        tools = mcp_server._tool_manager._tools  # type: ignore[attr-defined]
+        handler_fn = tools["llama3_chat"].fn  # type: ignore[attr-defined]
+
+        async def _fake_run(*args: Any, **kwargs: Any) -> Any:
+            yield {"done": True, "output": "hello world"}
+
+        with patch.dict(os.environ, {"REPLICATE_API_TOKEN": "test-token"}):  # type: ignore[dict-item]
+            with patch.object(_executor, "run", _fake_run):
+                result = await handler_fn(prompt="hello")
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+        assert parsed[0]["done"] is True
+
+
+# ---------------------------------------------------------------------------
+# _list_models resource with routing stats (lines 145-147)
+# ---------------------------------------------------------------------------
+
+
+class TestListModelsResourceWithRouting:
+    """Cover the _list_models resource handler registered inside _build_server."""
+
+    def test_list_models_includes_routing_stats(self) -> None:
+        """models://list resource includes routing stats for registered models."""
+        from replicate_mcp.server import _build_server  # noqa: PLC0415
+
+        mcp_server = _build_server()
+        list_models_fn = mcp_server._resource_manager._resources["models://list"].fn  # type: ignore[attr-defined]
+        result = list_models_fn()
+        parsed = json.loads(result)
+        # Default agents should have routing stats populated
+        llama = parsed["llama3_chat"]
+        assert "routing" in llama
+        assert "ema_cost_usd" in llama["routing"]
+        assert "ema_latency_ms" in llama["routing"]
+        assert "success_rate" in llama["routing"]
+        assert "invocations" in llama["routing"]
+
+    def test_list_models_routing_empty_for_unknown(self) -> None:
+        """When a model has no routing stats, routing dict is empty."""
+        from replicate_mcp.agents.registry import AgentMetadata  # noqa: PLC0415
+        from replicate_mcp.server import _registry  # noqa: PLC0415
+
+        # Add a temporary agent NOT registered with the router
+        temp_agent = AgentMetadata(
+            safe_name="temp_no_route",
+            description="Temporary test agent",
+            model="test/unregistered-model",
+            input_schema={"type": "object", "properties": {}},
+            supports_streaming=False,
+            estimated_cost=0.01,
+            avg_latency_ms=1000,
+            tags=["test"],
+        )
+        _registry.register(temp_agent)
+        try:
+            from replicate_mcp.server import _build_server  # noqa: PLC0415
+
+            mcp_server = _build_server()
+            list_models_fn = mcp_server._resource_manager._resources["models://list"].fn  # type: ignore[attr-defined]
+            result = list_models_fn()
+            parsed = json.loads(result)
+            assert parsed["temp_no_route"]["routing"] == {}
+        finally:
+            # Clean up so other tests aren't affected
+            _registry._agents.pop("temp_no_route", None)  # type: ignore[attr-defined]
+
+    def test_routing_leaderboard_resource_handler(self) -> None:
+        """routing://leaderboard resource returns valid JSON via _build_server."""
+        from replicate_mcp.server import _build_server  # noqa: PLC0415
+
+        mcp_server = _build_server()
+        leaderboard_fn = mcp_server._resource_manager._resources["routing://leaderboard"].fn  # type: ignore[attr-defined]
+        result = leaderboard_fn()
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+        assert all("model" in item for item in parsed)
+
+
+# ---------------------------------------------------------------------------
+# serve() function (line 173)
+# ---------------------------------------------------------------------------
+
+
+class TestServe:
+    def test_serve_calls_run_with_stdio(self) -> None:
+        """serve() should build an MCP server and call run(transport='stdio')."""
+        from replicate_mcp.server import serve  # noqa: PLC0415
+
+        mock_mcp = MagicMock()
+        with patch("replicate_mcp.server._build_server", return_value=mock_mcp):
+            serve()
+        mock_mcp.run.assert_called_once_with(transport="stdio")
+
+
+# ---------------------------------------------------------------------------
+# serve_http ImportError branch (lines 188-189)
+# ---------------------------------------------------------------------------
+
+
+class TestServeHttpImportError:
+    def test_serve_http_raises_when_uvicorn_missing(self) -> None:
+        """serve_http raises ImportError if uvicorn is not installed."""
+        from replicate_mcp.server import serve_http  # noqa: PLC0415
+
+        with patch.dict(sys.modules, {"uvicorn": None}):
+            with pytest.raises(ImportError, match="uvicorn is required"):
+                serve_http()
+
+
+# ---------------------------------------------------------------------------
+# serve_streamable_http ImportError branch (lines 217-218)
+# ---------------------------------------------------------------------------
+
+
+class TestServeStreamableHttpImportError:
+    def test_serve_streamable_http_raises_when_uvicorn_missing(self) -> None:
+        """serve_streamable_http raises ImportError if uvicorn is not installed."""
+        from replicate_mcp.server import serve_streamable_http  # noqa: PLC0415
+
+        with patch.dict(sys.modules, {"uvicorn": None}):
+            with pytest.raises(ImportError, match="uvicorn is required"):
+                serve_streamable_http()
+
+
+# ---------------------------------------------------------------------------
+# get_asgi_app streamable-http branch (lines 247-248)
+# ---------------------------------------------------------------------------
+
+
+class TestGetAsgiAppStreamableHttp:
+    def test_get_asgi_app_streamable_http_calls_streamable_http_app(self) -> None:
+        """get_asgi_app with transport='streamable-http' uses streamable_http_app()."""
+        from replicate_mcp.server import get_asgi_app  # noqa: PLC0415
+
+        mock_mcp = MagicMock()
+        mock_app = MagicMock()
+        mock_mcp.streamable_http_app.return_value = mock_app
+        with patch("replicate_mcp.server._build_server", return_value=mock_mcp):
+            result = get_asgi_app(transport="streamable-http")
+        mock_mcp.streamable_http_app.assert_called_once()
+        assert result is mock_app
+
+    def test_get_asgi_app_sse_calls_sse_app(self) -> None:
+        """get_asgi_app with transport='sse' uses sse_app()."""
+        from replicate_mcp.server import get_asgi_app  # noqa: PLC0415
+
+        mock_mcp = MagicMock()
+        mock_app = MagicMock()
+        mock_mcp.sse_app.return_value = mock_app
+        with patch("replicate_mcp.server._build_server", return_value=mock_mcp):
+            result = get_asgi_app(transport="sse", mount_path="/mcp")
+        mock_mcp.sse_app.assert_called_once_with(mount_path="/mcp")
+        assert result is mock_app
