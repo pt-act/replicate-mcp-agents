@@ -9,6 +9,10 @@ Covers:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from replicate_mcp.agents.composition import (
@@ -196,6 +200,13 @@ class TestAgentWorkflow:
         with pytest.raises(NodeNotFoundError):
             wf.add_edge(WorkflowEdge(from_agent="a", to_agent="missing"))
 
+    def test_add_edge_validates_source_node_exists(self) -> None:
+        """add_edge raises NodeNotFoundError for unknown source agent."""
+        wf = AgentWorkflow(name="w", description="d")
+        wf.add_agent("a", AgentNode(model_id="m/a", role="r"))
+        with pytest.raises(NodeNotFoundError):
+            wf.add_edge(WorkflowEdge(from_agent="missing", to_agent="a"))
+
     def test_add_edge_rejects_cycle(self) -> None:
         wf = (
             AgentWorkflow(name="w", description="d")
@@ -300,11 +311,42 @@ class TestAgentWorkflow:
         assert levels == [["a"], ["b", "c"], ["d"]]
 
     def test_validate_ok(self) -> None:
+        wf = AgentWorkflow(name="w", description="d").add_agent(
+            "a", AgentNode(model_id="m/a", role="r")
+        )
+        assert wf.validate() == []
+
+    def test_validate_dangling_edge_source(self) -> None:
+        """validate() reports edges with unknown source nodes."""
+        wf = AgentWorkflow(name="w", description="d")
+        wf.add_agent("a", AgentNode(model_id="m/a", role="r"))
+        # Manually inject an edge with a missing source (bypassing add_edge validation)
+        wf.edges.append(WorkflowEdge(from_agent="missing", to_agent="a"))
+        issues = wf.validate()
+        assert any("unknown source" in i for i in issues)
+
+    def test_validate_dangling_edge_target(self) -> None:
+        """validate() reports edges with unknown target nodes."""
+        wf = AgentWorkflow(name="w", description="d")
+        wf.add_agent("a", AgentNode(model_id="m/a", role="r"))
+        wf.edges.append(WorkflowEdge(from_agent="a", to_agent="missing"))
+        issues = wf.validate()
+        assert any("unknown target" in i for i in issues)
+
+    def test_validate_detects_cycle(self) -> None:
+        """validate() reports a cycle injected directly into adjacency."""
         wf = (
             AgentWorkflow(name="w", description="d")
             .add_agent("a", AgentNode(model_id="m/a", role="r"))
+            .add_agent("b", AgentNode(model_id="m/b", role="r"))
         )
-        assert wf.validate() == []
+        # Inject cycle: a->b and b->a bypassing add_edge validation
+        wf.edges.append(WorkflowEdge(from_agent="a", to_agent="b"))
+        wf._adjacency["a"].append("b")
+        wf.edges.append(WorkflowEdge(from_agent="b", to_agent="a"))
+        wf._adjacency["b"].append("a")
+        issues = wf.validate()
+        assert any("Cycle detected" in i for i in issues)
 
     def test_validate_empty(self) -> None:
         wf = AgentWorkflow(name="w", description="d")
@@ -329,6 +371,21 @@ class TestAgentWorkflow:
         w1.add_agent("x", AgentNode(model_id="m/x", role="r"))
         assert "x" not in w2.nodes
 
+    def test_remove_agent_rebuilds_adjacency(self) -> None:
+        """After removing an agent, adjacency list is correctly rebuilt."""
+        wf = (
+            AgentWorkflow(name="w", description="d")
+            .add_agent("a", AgentNode(model_id="m/a", role="r"))
+            .add_agent("b", AgentNode(model_id="m/b", role="r"))
+            .add_agent("c", AgentNode(model_id="m/c", role="r"))
+        )
+        wf.add_edge(WorkflowEdge(from_agent="a", to_agent="b"))
+        wf.add_edge(WorkflowEdge(from_agent="a", to_agent="c"))
+        # Remove b — only edge a→b should be gone; a→c remains
+        wf.remove_agent("b")
+        assert wf.successors("a") == ["c"]
+        assert wf.successors("c") == []
+
 
 # -----------------------------------------------------------------------
 # Workflow execution
@@ -340,9 +397,8 @@ class TestAgentWorkflowExecution:
 
     @pytest.mark.asyncio()
     async def test_single_node_passthrough(self) -> None:
-        wf = (
-            AgentWorkflow(name="demo", description="d")
-            .add_agent("a", AgentNode(model_id="m/a", role="r"))
+        wf = AgentWorkflow(name="demo", description="d").add_agent(
+            "a", AgentNode(model_id="m/a", role="r")
         )
         results = [chunk async for chunk in wf.execute({"key": "value"})]
         assert len(results) == 1
@@ -386,11 +442,13 @@ class TestAgentWorkflowExecution:
             .add_agent("a", AgentNode(model_id="m/a", role="r"))
             .add_agent("b", AgentNode(model_id="m/b", role="r"))
         )
-        wf.add_edge(WorkflowEdge(
-            from_agent="a",
-            to_agent="b",
-            transform=lambda d: {"transformed": True},
-        ))
+        wf.add_edge(
+            WorkflowEdge(
+                from_agent="a",
+                to_agent="b",
+                transform=lambda d: {"transformed": True},
+            )
+        )
         results = [chunk async for chunk in wf.execute({"orig": 1})]
         # Node b's input should have been transformed
         b_result = [r for r in results if r["node"] == "b"][0]
@@ -403,11 +461,13 @@ class TestAgentWorkflowExecution:
             .add_agent("a", AgentNode(model_id="m/a", role="r"))
             .add_agent("b", AgentNode(model_id="m/b", role="r"))
         )
-        wf.add_edge(WorkflowEdge(
-            from_agent="a",
-            to_agent="b",
-            condition=lambda d: False,  # always block
-        ))
+        wf.add_edge(
+            WorkflowEdge(
+                from_agent="a",
+                to_agent="b",
+                condition=lambda d: False,  # always block
+            )
+        )
         results = [chunk async for chunk in wf.execute({"x": 1})]
         # b should still execute, but with empty input (condition blocked data flow)
         b_result = [r for r in results if r["node"] == "b"][0]
@@ -421,13 +481,13 @@ class TestAgentWorkflowExecution:
                 pass
 
     @pytest.mark.asyncio()
-    async def test_checkpoint_integration(self, tmp_path) -> None:
-        wf = (
-            AgentWorkflow(name="ckpt", description="d")
-            .add_agent("a", AgentNode(model_id="m/a", role="r"))
+    async def test_checkpoint_integration(self, tmp_path: Path) -> None:
+        wf = AgentWorkflow(name="ckpt", description="d").add_agent(
+            "a", AgentNode(model_id="m/a", role="r")
         )
         results = [
-            chunk async for chunk in wf.execute(
+            chunk
+            async for chunk in wf.execute(
                 {"v": 1},
                 checkpoint_dir=tmp_path / "ckpts",
             )
@@ -436,3 +496,73 @@ class TestAgentWorkflowExecution:
         # Verify checkpoint file was created
         ckpt_file = tmp_path / "ckpts" / "wf-ckpt.json"
         assert ckpt_file.exists()
+
+    @pytest.mark.asyncio()
+    async def test_resume_from_checkpoint(self, tmp_path: Path) -> None:
+        """Resume skips levels before the resume node."""
+        wf = (
+            AgentWorkflow(name="resume", description="d")
+            .add_agent("a", AgentNode(model_id="m/a", role="r"))
+            .add_agent("b", AgentNode(model_id="m/b", role="r"))
+        )
+        wf.add_edge(WorkflowEdge(from_agent="a", to_agent="b"))
+        # First run to create checkpoint
+        results1 = [
+            chunk
+            async for chunk in wf.execute(
+                {"v": 1},
+                checkpoint_dir=tmp_path / "ckpts",
+            )
+        ]
+        assert len(results1) == 2
+        # Resume from node b — should skip node a
+        results2 = [
+            chunk
+            async for chunk in wf.execute(
+                {"v": 2},
+                checkpoint_dir=tmp_path / "ckpts",
+                resume_from="b",
+            )
+        ]
+        assert len(results2) == 1
+        assert results2[0]["node"] == "b"
+
+    @pytest.mark.asyncio()
+    async def test_resume_from_missing_checkpoint(self, tmp_path: Path) -> None:
+        """Resume with no checkpoint file still works (starts fresh from resume node)."""
+        wf = (
+            AgentWorkflow(name="miss", description="d")
+            .add_agent("a", AgentNode(model_id="m/a", role="r"))
+            .add_agent("b", AgentNode(model_id="m/b", role="r"))
+        )
+        wf.add_edge(WorkflowEdge(from_agent="a", to_agent="b"))
+        results = [
+            chunk
+            async for chunk in wf.execute(
+                {"v": 1},
+                checkpoint_dir=tmp_path / "ckpts",
+                resume_from="b",
+            )
+        ]
+        assert len(results) == 1
+        assert results[0]["node"] == "b"
+
+    @pytest.mark.asyncio()
+    async def test_execute_with_executor(self) -> None:
+        """When an executor is provided, it is called for each node."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        wf = AgentWorkflow(name="exec", description="d").add_agent(
+            "a", AgentNode(model_id="m/a", role="r")
+        )
+
+        async def _fake_run(
+            agent_id: str, payload: dict[str, Any]
+        ) -> AsyncIterator[dict[str, Any]]:
+            yield {"agent": agent_id, "output": "result", "done": True}
+
+        mock_executor = SimpleNamespace(run=_fake_run)
+
+        results = [chunk async for chunk in wf.execute({"v": 1}, executor=mock_executor)]
+        assert len(results) == 1
+        assert results[0]["output"]["output"] == "result"

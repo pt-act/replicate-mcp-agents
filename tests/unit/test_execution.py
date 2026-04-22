@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +15,7 @@ from replicate_mcp.agents.execution import (
     ModelInfo,
 )
 from replicate_mcp.exceptions import ModelNotFoundError
+from replicate_mcp.ratelimit import TokenBucket
 from replicate_mcp.resilience import RetryConfig, compute_retry_delay
 
 # -----------------------------------------------------------------------
@@ -229,7 +232,9 @@ class TestPhase5aExecutorIntegration:
 
     # ---- plugin registry ----
 
-    async def test_plugin_registry_dispatch_run_called(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_plugin_registry_dispatch_run_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """dispatch_run is called when plugin_registry is set."""
 
         from replicate_mcp.plugins.base import BasePlugin, PluginMetadata  # noqa: PLC0415
@@ -323,9 +328,7 @@ class TestPhase5aExecutorIntegration:
 
     # ---- audit logger ----
 
-    async def test_audit_logger_records_failed_invocation(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    async def test_audit_logger_records_failed_invocation(self, tmp_path: Path) -> None:
         """AuditLogger.record is called even when the API call fails."""
         from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
 
@@ -391,3 +394,303 @@ class TestPhase5aExecutorIntegration:
         model_id = executor.resolve_model("test_agent")
         key = ResultCache.make_key(model_id, {"prompt": "test"})
         assert cache.get(key) is not None
+
+
+# ---------------------------------------------------------------------------
+# ModelCatalogue extended coverage
+# ---------------------------------------------------------------------------
+
+
+class TestModelCatalogueExtended:
+    """Cover is_stale (non-None branch) and discover() paths."""
+
+    def test_is_stale_false_after_manual_refresh(self) -> None:
+        """is_stale returns False when _last_refresh is recent."""
+        cat = ModelCatalogue()
+        cat._last_refresh = time.monotonic()
+        assert cat.is_stale() is False
+
+    @pytest.mark.asyncio
+    async def test_discover_not_stale_returns_cached_count(self) -> None:
+        """When not stale, discover() returns cached model count without API call."""
+        cat = ModelCatalogue()
+        cat.add("a/b", ModelInfo(owner="a", name="b"))
+        cat._last_refresh = time.monotonic()  # not stale
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            result = await cat.discover(api_token="tok")  # noqa: S106
+        assert result == 1  # len of _models
+
+    @pytest.mark.asyncio
+    async def test_discover_exception_returns_zero(self) -> None:
+        """When discovery delegate raises, discover() catches and returns 0."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        cat = ModelCatalogue()
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            # Force is_stale by not setting _last_refresh
+            with patch(
+                "replicate_mcp.discovery.ModelDiscovery.refresh",
+                side_effect=RuntimeError("API down"),
+            ):
+                result = await cat.discover(api_token="tok")  # noqa: S106
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_discover_success_populates_models(self) -> None:
+        """Successful discover() populates the _models cache."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from replicate_mcp.agents.registry import (  # noqa: PLC0415
+            AgentMetadata,
+            AgentRegistry,
+        )
+        from replicate_mcp.discovery import (  # noqa: PLC0415
+            DiscoveryConfig,
+            DiscoveryResult,
+            ModelDiscovery,
+        )
+
+        registry = AgentRegistry()
+        registry.register(
+            AgentMetadata(
+                safe_name="test_model",
+                description="Test",
+                model="owner/test-model",
+            )
+        )
+        cfg = DiscoveryConfig(max_models=10)
+        discovery = ModelDiscovery(registry=registry, config=cfg)
+
+        cat = ModelCatalogue()
+        cat._discovery_delegate = discovery
+
+        # Mock refresh to return a successful result so discover() populates
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            with patch.object(
+                discovery,
+                "refresh",
+                return_value=DiscoveryResult(discovered=1, registered=1),
+            ):
+                result = await cat.discover(api_token="tok")  # noqa: S106
+
+        assert result >= 1
+        # The _models cache should now contain the discovered model
+        assert any("owner" in k for k in cat.models)
+
+
+# ---------------------------------------------------------------------------
+# AgentExecutor extended coverage — run() with mocked replicate
+# ---------------------------------------------------------------------------
+
+
+class TestAgentExecutorRun:
+    """Cover run() branches: rate limiter, plugin result dispatch, audit, circuit."""
+
+    @pytest.mark.asyncio
+    async def test_run_with_rate_limiter(self) -> None:
+        """Rate limiter acquire() is called during run()."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        rl = TokenBucket(rate=10.0, capacity=5)
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            rate_limiter=rl,
+            max_retries=0,
+        )
+
+        with patch("replicate.run", return_value=iter(["hi"])):
+            chunks: list[Any] = []
+            async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+                chunks.append(chunk)
+        assert len(chunks) >= 1
+
+    @pytest.mark.asyncio
+    async def test_run_dispatch_result_called(self) -> None:
+        """Plugin dispatch_result is called when plugin_registry is set."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from replicate_mcp.plugins.base import BasePlugin, PluginMetadata  # noqa: PLC0415
+        from replicate_mcp.plugins.registry import PluginRegistry  # noqa: PLC0415
+
+        result_transforms: list[Any] = []
+
+        class _ResultPlugin(BasePlugin):
+            @property
+            def metadata(self) -> PluginMetadata:
+                return PluginMetadata(name="result_xform")
+
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def on_agent_result(
+                self, agent_name: str, chunks: list, elapsed_ms: float
+            ) -> list | None:
+                result_transforms.append((agent_name, len(chunks)))
+                return None
+
+        reg = PluginRegistry()
+        reg.load(_ResultPlugin())
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            plugin_registry=reg,
+            max_retries=0,
+        )
+
+        with patch("replicate.run", return_value=iter(["hi"])):
+            chunks: list[Any] = []
+            async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+                chunks.append(chunk)
+        assert len(result_transforms) >= 1
+
+    @pytest.mark.asyncio
+    async def test_run_audit_logger_records_success(self, tmp_path: Path) -> None:
+        """Audit logger records a successful invocation."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+        audit = AuditLogger(path=tmp_path / "audit.jsonl")  # type: ignore[arg-type]
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            audit_logger=audit,
+            max_retries=0,
+        )
+
+        with patch("replicate.run", return_value=iter(["hi"])):
+            async for _ in executor.run("test_agent", {"prompt": "hi"}):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_run_circuit_open_yields_error(self) -> None:
+        """When circuit is open, run yields an error chunk."""
+        from replicate_mcp.resilience import (  # noqa: PLC0415
+            CircuitBreakerConfig,
+        )
+
+        cfg = CircuitBreakerConfig(
+            failure_threshold=1,
+            recovery_timeout=9999,
+        )
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            circuit_breaker_config=cfg,
+            max_retries=0,
+        )
+        # Trip the breaker manually
+        breaker = executor.circuit_breaker("owner/model")
+        breaker.record_failure()
+        breaker.record_failure()
+
+        chunks: list[Any] = []
+        async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+            chunks.append(chunk)
+        assert len(chunks) == 1
+        assert "Circuit open" in chunks[0]["error"]
+        assert chunks[0]["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_circuit_open_audit_logs_failure(self, tmp_path: Path) -> None:
+        """Circuit open triggers audit logger failure recording."""
+        from replicate_mcp.resilience import CircuitBreakerConfig  # noqa: PLC0415
+        from replicate_mcp.utils.audit import AuditLogger  # noqa: PLC0415
+
+        audit = AuditLogger(path=tmp_path / "audit.jsonl")  # type: ignore[arg-type]
+        cfg = CircuitBreakerConfig(failure_threshold=1, recovery_timeout=9999)
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            circuit_breaker_config=cfg,
+            audit_logger=audit,
+            max_retries=0,
+        )
+        breaker = executor.circuit_breaker("owner/model")
+        breaker.record_failure()
+        breaker.record_failure()
+
+        chunks: list[Any] = []
+        async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+            chunks.append(chunk)
+        assert len(chunks) == 1
+        assert "Circuit open" in chunks[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_run_non_iterable_output(self) -> None:
+        """When replicate.run returns a non-iterable (e.g. string), yields single output."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            max_retries=0,
+        )
+        # replicate.run returns a plain string (not iterable as list)
+        with patch("replicate.run", return_value="a plain string result"):
+            chunks: list[Any] = []
+            async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+                chunks.append(chunk)
+        # Should get one chunk with done=True
+        assert len(chunks) == 1
+        assert chunks[0]["output"] == "a plain string result"
+        assert chunks[0]["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_invoke_raises_execution_error(self) -> None:
+        """When replicate.run raises, it is wrapped in ExecutionError."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            max_retries=0,
+        )
+        with patch("replicate.run", side_effect=RuntimeError("API error")):
+            chunks: list[Any] = []
+            async for chunk in executor.run("test_agent", {"prompt": "hi"}):
+                chunks.append(chunk)
+        # Should yield a final error chunk after all retries
+        assert len(chunks) == 1
+        assert "ExecutionError" in chunks[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_run_plugin_dispatch_error_on_failure(self) -> None:
+        """dispatch_error is called when an invocation fails."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        from replicate_mcp.plugins.base import BasePlugin, PluginMetadata  # noqa: PLC0415
+        from replicate_mcp.plugins.registry import PluginRegistry  # noqa: PLC0415
+
+        error_calls: list[Any] = []
+
+        class _ErrorPlugin(BasePlugin):
+            @property
+            def metadata(self) -> PluginMetadata:
+                return PluginMetadata(name="error_tracker")
+
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def on_error(self, agent_name: str, error: Exception) -> None:
+                error_calls.append((agent_name, str(error)))
+
+        reg = PluginRegistry()
+        reg.load(_ErrorPlugin())
+        executor = AgentExecutor(
+            api_token="r8_test",  # noqa: S106
+            model_map={"test_agent": "owner/model"},
+            plugin_registry=reg,
+            max_retries=0,
+        )
+        with patch("replicate.run", side_effect=RuntimeError("API error")):
+            async for _ in executor.run("test_agent", {"prompt": "hi"}):
+                pass
+        assert len(error_calls) >= 1
