@@ -1,0 +1,23 @@
+name: content_creation_pipeline
+description: Generate, critique, and refine marketing content
+
+agents:
+  - id: ideator
+    model: anthropic/claude-4.5-sonnet
+    role: orchestrator
+    streaming: true
+  - id: image_gen
+    model: black-forest-labs/flux-1.1-pro
+    role: specialist
+  - id: critic
+    model: meta/llama-3.1-405b-instruct
+    role: critic
+    fallback: anthropic/claude-3.5-sonnet
+
+edges:
+  - from: ideator
+    to: image_gen
+    transform: extract_prompt            # registered in TransformRegistry
+  - from: image_gen
+    to: critic
+    condition: quality_above_0_7         # registered in TransformRegistry

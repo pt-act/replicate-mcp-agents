@@ -1,0 +1,170 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    # Nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+  security-events: write   # for uploading SARIF results
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # pip-audit — known CVE check against all dependencies
+  # ---------------------------------------------------------------------------
+  pip-audit:
+    name: pip-audit (dependency CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Poetry + pip-audit
+        run: pip install poetry pip-audit poetry-plugin-export
+      - name: Export requirements
+        # Audit only declared project deps (not the local editable package itself,
+        # not runner-global tools like uv/wheel which aren't our deps).
+        run: |
+          poetry export --without-hashes -f requirements.txt \
+            --without docs \
+            -o /tmp/audit-requirements.txt
+      - name: Run pip-audit
+        run: pip-audit -r /tmp/audit-requirements.txt --desc
+
+  # ---------------------------------------------------------------------------
+  # SAST — Bandit static analysis for Python security issues
+  # ---------------------------------------------------------------------------
+  bandit:
+    name: Bandit (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Bandit
+        run: pip install bandit[sarif]
+      - name: Run Bandit
+        run: |
+          bandit -r src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --exclude src/replicate_mcp/dsl.py \
+            -f sarif \
+            -o bandit-results.sarif || true
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+  # ---------------------------------------------------------------------------
+  # Semgrep — additional SAST rules
+  # ---------------------------------------------------------------------------
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/owasp-top-ten
+            p/secrets
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: true   # non-blocking until baseline established
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning — detect-secrets pre-flight check
+  # ---------------------------------------------------------------------------
+  detect-secrets:
+    name: detect-secrets (credential scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history for baseline comparison
+      - name: Install detect-secrets
+        run: pip install detect-secrets
+      - name: Scan for secrets
+        run: |
+          detect-secrets scan \
+            --exclude-files '\.git/.*' \
+            --exclude-files 'poetry\.lock' \
+            > .secrets.baseline || true
+          detect-secrets audit .secrets.baseline --report || true
+          # Fail if any HIGH-confidence secrets found
+          python -c "
+          import json, sys
+          with open('.secrets.baseline') as f:
+              data = json.load(f)
+          results = data.get('results', {})
+          high_confidence = [
+              f'{path}:{s[\"line_number\"]}: {s[\"type\"]}'
+              for path, secrets in results.items()
+              for s in secrets
+              if s.get('is_verified') or s.get('type') not in ('Hex High Entropy String', 'Base64 High Entropy String')
+          ]
+          if high_confidence:
+              print('Potential secrets found:')
+              print('\n'.join(high_confidence))
+              sys.exit(1)
+          print('No high-confidence secrets found.')
+          "
+
+  # ---------------------------------------------------------------------------
+  # SBOM — generate CycloneDX software bill of materials
+  # ---------------------------------------------------------------------------
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Poetry + cyclonedx-py
+        run: pip install poetry cyclonedx-bom poetry-plugin-export
+      - name: Generate SBOM (CycloneDX JSON)
+        run: |
+          poetry export --without-hashes --without docs \
+            -f requirements.txt -o /tmp/requirements.txt
+          cyclonedx-py requirements /tmp/requirements.txt \
+            --of JSON \
+            -o sbom.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Dependency update check — Renovate / Dependabot handles PRs;
+  # this job just verifies the lock file is current.
+  # ---------------------------------------------------------------------------
+  lockfile-check:
+    name: Lock file freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+      - name: Verify lock file is up to date
+        run: poetry check --lock
