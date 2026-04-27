@@ -196,7 +196,7 @@ breaker.reset()
 **Root Cause Steps:**
 1. Profile memory: `memray run replicate-mcp-server`.
 2. Check `TelemetryTracker._events` — this list is unbounded in v0.3.
-3. Check `ModelCatalogue._models` — capped at `limit=25` in `discover()`.
+3. Check model discovery cache — capped at `limit=25` in `discover()`.
 
 **Remediation:**
 - Add a max-events cap to `TelemetryTracker` (Phase 3 item).

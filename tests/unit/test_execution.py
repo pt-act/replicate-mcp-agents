@@ -1,4 +1,4 @@
-"""Unit tests for AgentExecutor, ModelCatalogue, and retry/concurrency."""
+"""Unit tests for AgentExecutor and retry/concurrency."""
 
 from __future__ import annotations
 
@@ -11,66 +11,10 @@ import pytest
 from replicate_mcp.agents.execution import (
     DEFAULT_MODEL_MAP,
     AgentExecutor,
-    ModelCatalogue,
-    ModelInfo,
 )
 from replicate_mcp.exceptions import ModelNotFoundError
 from replicate_mcp.ratelimit import TokenBucket
 from replicate_mcp.resilience import RetryConfig, compute_retry_delay
-
-# -----------------------------------------------------------------------
-# ModelInfo
-# -----------------------------------------------------------------------
-
-
-class TestModelInfo:
-    def test_basic_construction(self) -> None:
-        info = ModelInfo(owner="meta", name="llama-3")
-        assert info.owner == "meta"
-        assert info.name == "llama-3"
-        assert info.description == ""
-        assert info.default_input_schema == {}
-
-    def test_with_schema(self) -> None:
-        info = ModelInfo(
-            owner="stability",
-            name="sdxl",
-            default_input_schema={"type": "object"},
-        )
-        assert info.default_input_schema["type"] == "object"
-
-
-# -----------------------------------------------------------------------
-# ModelCatalogue
-# -----------------------------------------------------------------------
-
-
-class TestModelCatalogue:
-    def test_empty_catalogue(self) -> None:
-        cat = ModelCatalogue()
-        assert cat.models == {}
-
-    def test_add_and_get(self) -> None:
-        cat = ModelCatalogue()
-        cat.add("meta/llama", ModelInfo(owner="meta", name="llama"))
-        assert cat.get("meta/llama") is not None
-        assert cat.get("meta/llama").name == "llama"
-
-    def test_get_missing_returns_none(self) -> None:
-        cat = ModelCatalogue()
-        assert cat.get("nonexistent") is None
-
-    def test_is_stale_initially(self) -> None:
-        cat = ModelCatalogue()
-        assert cat.is_stale() is True
-
-    def test_models_returns_copy(self) -> None:
-        cat = ModelCatalogue()
-        cat.add("a/b", ModelInfo(owner="a", name="b"))
-        copy = cat.models
-        copy.clear()
-        assert len(cat.models) == 1
-
 
 # -----------------------------------------------------------------------
 # compute_retry_delay (was _decorrelated_jitter)
@@ -121,12 +65,6 @@ class TestAgentExecutor:
         executor = AgentExecutor(model_map={"myagent": "my/model"})
         assert executor.resolve_model("myagent") == "my/model"
 
-    def test_resolve_model_from_catalogue(self) -> None:
-        cat = ModelCatalogue()
-        cat.add("owner/cool-model", ModelInfo(owner="owner", name="cool-model"))
-        executor = AgentExecutor(catalogue=cat)
-        assert executor.resolve_model("cool-model") == "owner/cool-model"
-
     @pytest.mark.asyncio()
     async def test_run_without_token_yields_error(self) -> None:
         executor = AgentExecutor(api_token="")
@@ -139,11 +77,8 @@ class TestAgentExecutor:
         assert "llama3_chat" in DEFAULT_MODEL_MAP
         assert "/" in DEFAULT_MODEL_MAP["llama3_chat"]
 
-    def test_catalogue_property(self) -> None:
-        executor = AgentExecutor()
-        assert isinstance(executor.catalogue, ModelCatalogue)
-
-
+# ---------------------------------------------------------------------------
+# Phase4 — ModelDiscovery integration
 # ---------------------------------------------------------------------------
 # Phase 4 — ModelDiscovery integration
 # ---------------------------------------------------------------------------
@@ -394,88 +329,6 @@ class TestPhase5aExecutorIntegration:
         model_id = executor.resolve_model("test_agent")
         key = ResultCache.make_key(model_id, {"prompt": "test"})
         assert cache.get(key) is not None
-
-
-# ---------------------------------------------------------------------------
-# ModelCatalogue extended coverage
-# ---------------------------------------------------------------------------
-
-
-class TestModelCatalogueExtended:
-    """Cover is_stale (non-None branch) and discover() paths."""
-
-    def test_is_stale_false_after_manual_refresh(self) -> None:
-        """is_stale returns False when _last_refresh is recent."""
-        cat = ModelCatalogue()
-        cat._last_refresh = time.monotonic()
-        assert cat.is_stale() is False
-
-    @pytest.mark.asyncio
-    async def test_discover_not_stale_returns_cached_count(self) -> None:
-        """When not stale, discover() returns cached model count without API call."""
-        cat = ModelCatalogue()
-        cat.add("a/b", ModelInfo(owner="a", name="b"))
-        cat._last_refresh = time.monotonic()  # not stale
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            result = await cat.discover(api_token="tok")  # noqa: S106
-        assert result == 1  # len of _models
-
-    @pytest.mark.asyncio
-    async def test_discover_exception_returns_zero(self) -> None:
-        """When discovery delegate raises, discover() catches and returns 0."""
-        from unittest.mock import patch  # noqa: PLC0415
-
-        cat = ModelCatalogue()
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            # Force is_stale by not setting _last_refresh
-            with patch(
-                "replicate_mcp.discovery.ModelDiscovery.refresh",
-                side_effect=RuntimeError("API down"),
-            ):
-                result = await cat.discover(api_token="tok")  # noqa: S106
-        assert result == 0
-
-    @pytest.mark.asyncio
-    async def test_discover_success_populates_models(self) -> None:
-        """Successful discover() populates the _models cache."""
-        from unittest.mock import patch  # noqa: PLC0415
-
-        from replicate_mcp.agents.registry import (  # noqa: PLC0415
-            AgentMetadata,
-            AgentRegistry,
-        )
-        from replicate_mcp.discovery import (  # noqa: PLC0415
-            DiscoveryConfig,
-            DiscoveryResult,
-            ModelDiscovery,
-        )
-
-        registry = AgentRegistry()
-        registry.register(
-            AgentMetadata(
-                safe_name="test_model",
-                description="Test",
-                model="owner/test-model",
-            )
-        )
-        cfg = DiscoveryConfig(max_models=10)
-        discovery = ModelDiscovery(registry=registry, config=cfg)
-
-        cat = ModelCatalogue()
-        cat._discovery_delegate = discovery
-
-        # Mock refresh to return a successful result so discover() populates
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            with patch.object(
-                discovery,
-                "refresh",
-                return_value=DiscoveryResult(discovered=1, registered=1),
-            ):
-                result = await cat.discover(api_token="tok")  # noqa: S106
-
-        assert result >= 1
-        # The _models cache should now contain the discovered model
-        assert any("owner" in k for k in cat.models)
 
 
 # ---------------------------------------------------------------------------

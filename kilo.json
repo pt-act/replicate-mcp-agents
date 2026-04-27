@@ -1,0 +1,9 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "default_agent": "code",
+  "instructions": [".agents/AGENTS.md", ".agents/AGENTS.project.md"],
+  "compaction": {
+    "auto": true,
+    "prune": true
+  }
+}

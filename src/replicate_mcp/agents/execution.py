@@ -9,14 +9,7 @@ Features (Phase 2 hardened):
     - :class:`~replicate_mcp.resilience.RetryConfig` exponential back-off
     - :class:`~replicate_mcp.ratelimit.TokenBucket` rate limiting
     - :class:`~replicate_mcp.observability.Observability` OTEL traces+metrics
-    - Model catalogue hydration delegated to :class:`~replicate_mcp.discovery.ModelDiscovery`
     - Streaming and non-streaming output paths
-
-Phase 4 consolidation:
-    :class:`ModelCatalogue` is retained for backward compatibility but now
-    delegates its discovery logic to :class:`~replicate_mcp.discovery.ModelDiscovery`.
-    New code should pass a ``ModelDiscovery`` instance to :class:`AgentExecutor`
-    directly via the ``discovery`` constructor parameter.
 """
 
 from __future__ import annotations
@@ -24,7 +17,6 @@ from __future__ import annotations
 import logging
 import os
 import time
-import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -85,94 +77,6 @@ class ModelInfo:
 # ---------------------------------------------------------------------------
 
 
-class ModelCatalogue:
-    """In-memory cache of Replicate model metadata.
-
-    .. deprecated::
-        Use :class:`~replicate_mcp.discovery.ModelDiscovery` directly.
-        ``ModelCatalogue`` is retained for backward compatibility only.
-        Pass a :class:`~replicate_mcp.discovery.ModelDiscovery` instance
-        to :class:`AgentExecutor` via the ``discovery`` parameter instead.
-
-    Call :meth:`discover` to populate from the API.  Falls back to
-    ``DEFAULT_MODEL_MAP`` if the API is unavailable.
-    """
-
-    def __init__(self) -> None:
-        self._models: dict[str, ModelInfo] = {}
-        self._ttl_seconds: float = 300.0
-        self._last_refresh: float | None = None
-        # Internal ModelDiscovery delegate (populated lazily on first discover())
-        self._discovery_delegate: ModelDiscovery | None = None
-
-    @property
-    def models(self) -> dict[str, ModelInfo]:
-        return dict(self._models)
-
-    def is_stale(self) -> bool:
-        if self._last_refresh is None:
-            return True
-        return (time.monotonic() - self._last_refresh) > self._ttl_seconds
-
-    def add(self, key: str, info: ModelInfo) -> None:
-        self._models[key] = info
-
-    def get(self, key: str) -> ModelInfo | None:
-        return self._models.get(key)
-
-    async def discover(self, *, api_token: str, limit: int = 25) -> int:
-        """Fetch models from Replicate API and cache them.
-
-        Delegates to :class:`~replicate_mcp.discovery.ModelDiscovery`
-        internally.  Returns the number of models cached.  Respects the TTL.
-
-        .. deprecated::
-            Use :class:`~replicate_mcp.discovery.ModelDiscovery` instead.
-        """
-        warnings.warn(
-            "ModelCatalogue.discover() is deprecated. "
-            "Use replicate_mcp.discovery.ModelDiscovery instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if not self.is_stale():
-            return len(self._models)
-
-        try:
-            from replicate_mcp.agents.registry import AgentRegistry  # noqa: PLC0415
-            from replicate_mcp.discovery import (  # noqa: PLC0415
-                DiscoveryConfig,
-                ModelDiscovery,
-            )
-
-            if self._discovery_delegate is None:
-                cfg = DiscoveryConfig(max_models=limit, auto_streaming=False)
-                self._discovery_delegate = ModelDiscovery(
-                    registry=AgentRegistry(), config=cfg
-                )
-
-            result = await self._discovery_delegate.refresh(api_token=api_token)
-
-            # Mirror discovered agents into the local _models cache for compat
-            for name, meta in self._discovery_delegate.registry.list_agents().items():
-                parts = meta.model.split("/") if meta.model else ["", name]
-                owner = parts[0] if len(parts) >= 2 else ""
-                model_name = parts[1] if len(parts) >= 2 else parts[0]
-                self._models[f"{owner}/{model_name}"] = ModelInfo(
-                    owner=owner,
-                    name=model_name,
-                    description=meta.description,
-                    supports_streaming=meta.supports_streaming,
-                )
-
-            self._last_refresh = time.monotonic()
-            return result.total_registered
-
-        except Exception:  # noqa: BLE001
-            logger.warning("Model catalogue discovery failed; using static map")
-            return 0
-
-
 # ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
@@ -202,9 +106,8 @@ class AgentExecutor:
         max_concurrency: int = 10,
         max_retries: int = 2,
         retry_base: float = 0.5,
-        catalogue: ModelCatalogue | None = None,
         discovery: ModelDiscovery | None = None,
-        # Phase 2 additions
+        # Phase2 additions
         circuit_breaker_config: CircuitBreakerConfig | None = None,
         rate_limiter: TokenBucket | None = None,
         observability: Observability | None = None,
@@ -222,10 +125,9 @@ class AgentExecutor:
             max_retries=max_retries,
             base_delay=retry_base,
         )
-        self._catalogue = catalogue or ModelCatalogue()
-        # Phase 4: canonical discovery backend (preferred over ModelCatalogue)
+        # Canonical discovery backend
         self._discovery: ModelDiscovery | None = discovery
-        # Phase 2: per-model circuit breakers, shared rate limiter, OTEL
+        # Phase2: per-model circuit breakers, shared rate limiter, OTEL
         self._cb_config = circuit_breaker_config or CircuitBreakerConfig()
         self._breakers: dict[str, CircuitBreaker] = {}
         self._rate_limiter = rate_limiter  # may be None (no rate limit)
@@ -236,10 +138,6 @@ class AgentExecutor:
         self._audit_logger: AuditLogger | None = audit_logger
         # Phase 5a: content-addressed result cache
         self._cache: ResultCache | None = cache
-
-    @property
-    def catalogue(self) -> ModelCatalogue:
-        return self._catalogue
 
     @property
     def discovery(self) -> ModelDiscovery | None:
@@ -283,11 +181,6 @@ class AgentExecutor:
             for safe_name, meta in registry.list_agents().items():
                 if meta.model and meta.model.endswith(f"/{agent_id}"):
                     return meta.model
-
-        # Legacy catalogue fallback
-        for key in self._catalogue.models:
-            if key.endswith(f"/{agent_id}"):
-                return key
 
         raise ModelNotFoundError(agent_id, list(self._model_map))
 
@@ -505,7 +398,5 @@ class AgentExecutor:
 
 __all__ = [
     "AgentExecutor",
-    "ModelCatalogue",
-    "ModelInfo",
     "DEFAULT_MODEL_MAP",
 ]

@@ -19,7 +19,7 @@ Complete reference for all public modules in `replicate_mcp`.
 | Module | Description |
 |---|---|
 | [`replicate_mcp.agents.registry`](agents/registry.md) | `AgentRegistry`, `AgentMetadata` |
-| [`replicate_mcp.agents.execution`](agents/execution.md) | `AgentExecutor`, `ModelCatalogue` |
+| [`replicate_mcp.agents.execution`](agents/execution.md) | `AgentExecutor` |
 | [`replicate_mcp.agents.composition`](agents/composition.md) | `AgentWorkflow`, `AgentNode`, DAG engine |
 | [`replicate_mcp.agents.transforms`](agents/transforms.md) | `TransformFn`, built-in transforms |
 
