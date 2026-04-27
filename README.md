@@ -314,7 +314,7 @@ This section documents specific technical deficiencies found during static analy
 | 4.4 | `sdk.py` — `global _default_registry` mutations | Low | ✅ Fixed | v0.7.0: Lazy initialization removes eager global state |
 | 4.5 | `resilience.py` — duplicate `RetryConfig` in `__all__` | Cosmetic | ✅ Fixed | Single occurrence verified |
 | 4.6 | `routing.py` — Beta posterior conflates objectives | High | ✅ Fixed | `thompson_multi` strategy implements Gaussian TS on scalarized utility |
-| 4.7 | `execution.py` — `ModelCatalogue` deprecated | Low | 🔄 Open | Remove in v0.8.0; use `ModelDiscovery` |
+| 4.7 | `execution.py` — `ModelCatalogue` removal | Low | ✅ Fixed | Removed in v0.7.0; use `ModelDiscovery` |
 
 #### 4.1 Side-Effectful `state` Property (resilience.py:135–142) — ✅ VERIFIED
 
@@ -346,9 +346,9 @@ Only one occurrence exists — README was stale. Corrected above.
 
 This incorporates all three objectives into the exploration-exploitation balance. Usage: `CostAwareRouter(strategy="thompson_multi")`.
 
-#### 4.7 Discovery Duplication (`ModelCatalogue` vs `ModelDiscovery`)
+#### 4.7 Discovery Duplication (`ModelCatalogue` vs `ModelDiscovery`) — ✅ FIXED
 
-`ModelCatalogue` in `execution.py` is deprecated and delegates to `ModelDiscovery`. It will be removed in v0.8.0. Use `ModelDiscovery` directly for new code.
+`ModelCatalogue` in `execution.py` was deprecated and has been removed in v0.7.0. Use `ModelDiscovery` directly for new code.
 
 ### 5. Value Proposition
 
@@ -382,7 +382,7 @@ src/replicate_mcp/
 │   └── main.py              # serve, agents run, workflows run, workers start
 ├── agents/                  # Core agent execution
 │   ├── __init__.py
-│   ├── execution.py         # AgentExecutor, ModelCatalogue (deprecated)
+│   ├── execution.py         # AgentExecutor
 │   ├── registry.py          # AgentRegistry, AgentMetadata
 │   ├── composition.py       # WorkflowComposer, DAG execution
 │   └── transforms.py        # Output → input transforms
@@ -702,12 +702,12 @@ analysis_wf = (
 
 ## Roadmap
 
-| Phase | Target | Features |
-|-------|--------|----------|
-| v0.7.0 | Q2 2024 | Technical debt (state property, encapsulation, ModelCatalogue removal) |
-| v0.8.0 | Q2 2024 | Multi-objective routing (Pareto frontier) |
-| v0.9.0 | Q3 2024 | Persistent router state (Redis/SQLite backend) |
-| v1.0.0 | Q3 2024 | Stable API, plugin marketplace, managed worker cloud |
+| Phase | Target | Features | Status |
+|-------|--------|----------|--------|
+| v0.7.0 | Q2 2026 | Technical debt (state property, encapsulation, ModelCatalogue removal) | ✅ Complete |
+| v0.8.0 | Q2 2026 | Multi-objective routing (Pareto frontier) | 🔄 In Progress |
+| v0.9.0 | Q3 2026 | Persistent router state (Redis/SQLite backend) | ⏳ Not Started |
+| v1.0.0 | Q3 2026 | Stable API, plugin marketplace, managed worker cloud | ⏳ Not Started |
 
 ---
 

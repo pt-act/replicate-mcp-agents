@@ -24,7 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Existing `thompson` strategy unchanged for backward compatibility.
 - **Addresses:** Technical debt item 4.6 (Beta posterior conflates objectives).
 
-**3. Documentation Updates**
+**3. ModelCatalogue Removal (`execution.py`, `agents/__init__.py`, tests)**
+- Removed deprecated `ModelCatalogue` and `ModelInfo` classes entirely.
+- `AgentExecutor` no longer accepts `catalogue` parameter; uses `ModelDiscovery` directly.
+- Removed legacy catalogue fallback in `resolve_model()`.
+- Updated tests to remove all `ModelCatalogue`/`ModelInfo` references.
+- **Addresses:** Technical debt item 4.7 (ModelCatalogue deprecation).
+
+**4. Documentation Updates**
 - `docs/adr/005-cost-routing.md` — Added `thompson_multi` strategy documentation.
 - `docs/adr/006.md` — Added v0.7.0 lazy initialization update.
 
