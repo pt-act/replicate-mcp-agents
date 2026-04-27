@@ -1,7 +1,7 @@
 site_name: Replicate MCP Agents
-site_url: https://your-org.github.io/replicate-mcp-agents/
-repo_url: https://github.com/your-org/replicate-mcp-agents
-repo_name: your-org/replicate-mcp-agents
+site_url: https://pt-act.github.io/replicate-mcp-agents/
+repo_url: https://github.com/pt-act/replicate-mcp-agents
+repo_name: pt-act/replicate-mcp-agents
 
 nav:
   - Home: README.md

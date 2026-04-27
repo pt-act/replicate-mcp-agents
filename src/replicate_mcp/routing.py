@@ -21,8 +21,8 @@ Two selection strategies are supported:
 
 Design (see ADR-005):
     - All statistics are maintained per ``model`` string.
-    - EMA smoothing factor ``alpha`` defaults to 0.3 (30% weight on new
-      observation, 70% on historical average).
+    - EMA smoothing factor ``alpha`` configurable via ``ema_alpha`` parameter
+      (default 0.3: 30% weight on new observation, 70% on historical average).
     - New models start with ``ts_alpha = ts_beta = 1`` (uniform prior).
     - ``record_outcome()`` must be called after every invocation so the
       router learns over time.
