@@ -94,9 +94,6 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
 addopts = [
-    "--cov=src/replicate_mcp",
-    "--cov-report=term-missing",
-    "--cov-report=html",
     "--strict-markers",
     "-v"
 ]
