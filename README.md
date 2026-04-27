@@ -308,25 +308,25 @@ This section documents specific technical deficiencies found during static analy
 
 | # | Location | Severity | Status | Notes |
 |---|----------|----------|--------|-------|
-| 4.1 | `resilience.py` — side-effectful `state` property | Medium | 🔄 Open | Mutation in getter; transition should be explicit |
+| 4.1 | `resilience.py` — side-effectful `state` property | Medium | ✅ Verified | `state` is pure getter; `_maybe_recover()` called explicitly by action methods |
 | 4.2 | `distributed.py` — deprecated `get_event_loop()` | Medium | ✅ Fixed | Uses `get_running_loop()` since v0.5.0 |
-| 4.3 | `qos.py` — `AdaptiveRouter` encapsulation break | Low-Medium | 🔄 Open | SLF001 suppression on `_stats` access |
+| 4.3 | `qos.py` — `AdaptiveRouter` encapsulation break | Low-Medium | ✅ Verified | Uses public `sync_stats()` API; no private access |
 | 4.4 | `sdk.py` — `global _default_registry` mutations | Low | ✅ Fixed | v0.7.0: Lazy initialization removes eager global state |
 | 4.5 | `resilience.py` — duplicate `RetryConfig` in `__all__` | Cosmetic | ✅ Fixed | Single occurrence verified |
-| 4.6 | `routing.py` — Beta posterior conflates objectives | High | 🔄 Open | Multi-objective bandit needed |
+| 4.6 | `routing.py` — Beta posterior conflates objectives | High | ✅ Fixed | `thompson_multi` strategy implements Gaussian TS on scalarized utility |
 | 4.7 | `execution.py` — `ModelCatalogue` deprecated | Low | 🔄 Open | Remove in v0.8.0; use `ModelDiscovery` |
 
-#### 4.1 Side-Effectful `state` Property (resilience.py:135–142)
+#### 4.1 Side-Effectful `state` Property (resilience.py:135–142) — ✅ VERIFIED
 
-The `CircuitBreaker.state` property performs a **state transition** (OPEN → HALF-OPEN) as a side effect of being read. The actual implementation uses `_maybe_recover()` called by `can_execute()` and `pre_call()`, which is documented as intentional. However, this still means state changes happen during queries. The transition should be triggered explicitly, not as a side effect of reading state.
+The `CircuitBreaker.state` property is a **pure getter** — it returns the current state without side effects. State transitions (OPEN → HALF-OPEN) are triggered explicitly by `_maybe_recover()`, which is called only by action methods (`can_execute()`, `pre_call()`), not by the property itself. The README was stale; the implementation already follows the correct pattern.
 
 #### 4.2 Deprecated `asyncio.get_event_loop()` (distributed.py:125)
 
 Uses `asyncio.get_running_loop().create_future()` since v0.5.0. README was stale — corrected above.
 
-#### 4.3 Broken Encapsulation in `AdaptiveRouter` (qos.py:324–334)
+#### 4.3 Broken Encapsulation in `AdaptiveRouter` (qos.py:324–334) — ✅ VERIFIED
 
-`AdaptiveRouter.select_model()` syncs Thompson Sampling state by directly accessing the private `_stats` dictionary of its owned `CostAwareRouter` instance via `# noqa: SLF001` suppression. The correct fix is to expose a `sync_stats(model, alpha, beta)` method on `CostAwareRouter`.
+`AdaptiveRouter.select_model()` uses the public `sync_stats(model, ts_alpha, ts_beta)` method on `CostAwareRouter`. No private attribute access occurs. The README was stale; encapsulation is already clean.
 
 #### 4.4 Module-Level Mutable Global (sdk.py) — FIXED
 
@@ -336,9 +336,15 @@ The `@agent` decorator previously registered into `_default_registry`, a module-
 
 Only one occurrence exists — README was stale. Corrected above.
 
-#### 4.6 Beta Posterior Conflates Objectives (routing.py)
+#### 4.6 Beta Posterior Conflates Objectives (routing.py) — ✅ FIXED
 
-Thompson Sampling draws from `Beta(ts_alpha, ts_beta)` where α tracks binary success/failure. This means latency and cost — which are continuous outcomes tracked separately via EMA — do not influence the Thompson draw. A multi-objective bandit (e.g., Pareto-UCB1) would unify these objectives theoretically; the current hybrid is pragmatic but not formally coherent.
+**v0.7.0 implemented `thompson_multi` strategy.** The original Thompson Sampling drew from `Beta(ts_alpha, ts_beta)` based on binary success/failure, ignoring cost/latency EMAs. The new `thompson_multi` strategy:
+
+1. **Scalarizes** cost, latency, and quality into a utility score using configurable weights
+2. **Samples** from a Gaussian posterior over utility: `N(empirical_mean, 1/√τ)`
+3. **Selects** the model with highest sampled utility
+
+This incorporates all three objectives into the exploration-exploitation balance. Usage: `CostAwareRouter(strategy="thompson_multi")`.
 
 #### 4.7 Discovery Duplication (`ModelCatalogue` vs `ModelDiscovery`)
 
