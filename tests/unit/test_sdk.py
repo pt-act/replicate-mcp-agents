@@ -349,9 +349,9 @@ class TestAgentContext:
 class TestWorkflowRegistry:
     def setup_method(self) -> None:
         """Clear the workflow registry before each test."""
-        from replicate_mcp.sdk import _workflow_registry  # noqa: PLC0415
+        from replicate_mcp.sdk import reset_workflow_registry  # noqa: PLC0415
 
-        _workflow_registry.clear()
+        reset_workflow_registry()
 
     def _make_spec(self, name: str = "test-wf") -> WorkflowSpec:
         return WorkflowBuilder(name).then("agent-a").build()

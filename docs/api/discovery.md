@@ -8,6 +8,11 @@
         - ModelDiscovery
         - discover_and_register
 
+!!! note "ModelCatalogue Deprecation"
+    The legacy `ModelCatalogue` class (in `agents/execution.py`) is deprecated
+    and will be removed in v0.8.0. Use `ModelDiscovery` for all new code.
+    `ModelCatalogue` currently delegates to `ModelDiscovery` internally.
+
 ## Quick start
 
 ```python

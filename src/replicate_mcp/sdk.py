@@ -60,10 +60,28 @@ from replicate_mcp.exceptions import ReplicateMCPError
 logger = logging.getLogger(__name__)
 
 # Module-level default registry used by the @agent decorator.
-_default_registry: AgentRegistry = AgentRegistry()
+# Lazy-initialized to avoid mutable global state at import time (§03 fix).
+_default_registry: AgentRegistry | None = None
 
 # Module-level workflow registry used by register_workflow() and the CLI.
-_workflow_registry: dict[str, WorkflowSpec] = {}
+# Lazy-initialized to avoid mutable global state at import time (§03 fix).
+_workflow_registry: dict[str, WorkflowSpec] | None = None
+
+
+def _ensure_default_registry() -> AgentRegistry:
+    """Lazy-initialize and return the module-level default registry."""
+    global _default_registry  # noqa: PLW0603
+    if _default_registry is None:
+        _default_registry = AgentRegistry()
+    return _default_registry
+
+
+def _ensure_workflow_registry() -> dict[str, WorkflowSpec]:
+    """Lazy-initialize and return the module-level workflow registry."""
+    global _workflow_registry  # noqa: PLW0603
+    if _workflow_registry is None:
+        _workflow_registry = {}
+    return _workflow_registry
 
 
 def get_default_registry() -> AgentRegistry:
@@ -71,25 +89,31 @@ def get_default_registry() -> AgentRegistry:
 
     All agents registered with the :func:`agent` decorator land here
     unless an :class:`AgentContext` is active.
+
+    The registry is created lazily on first access to avoid mutable
+    global state at import time.
     """
-    return _default_registry
+    return _ensure_default_registry()
 
 
 def reset_default_registry() -> None:
     """Clear the default agent registry.
 
     Useful in tests where each test case needs a clean slate.
+    The registry will be recreated on next access.
     """
     global _default_registry  # noqa: PLW0603
-    _default_registry = AgentRegistry()
+    _default_registry = None
 
 
 def reset_workflow_registry() -> None:
     """Clear the module-level workflow registry.
 
     Primarily useful in tests where each test case needs a clean slate.
+    The registry will be recreated on next access.
     """
-    _workflow_registry.clear()
+    global _workflow_registry  # noqa: PLW0603
+    _workflow_registry = None
 
 
 def register_workflow(spec: WorkflowSpec) -> WorkflowSpec:
@@ -115,18 +139,18 @@ def register_workflow(spec: WorkflowSpec) -> WorkflowSpec:
         register_workflow(wf)
         # Now available as: replicate-agent workflows run research
     """
-    _workflow_registry[spec.name] = spec
+    _ensure_workflow_registry()[spec.name] = spec
     return spec
 
 
 def get_workflow(name: str) -> WorkflowSpec | None:
     """Return the registered :class:`WorkflowSpec` for *name*, or ``None``."""
-    return _workflow_registry.get(name)
+    return _ensure_workflow_registry().get(name)
 
 
 def list_workflows() -> dict[str, WorkflowSpec]:
     """Return a snapshot of the module-level workflow registry."""
-    return dict(_workflow_registry)
+    return dict(_ensure_workflow_registry())
 
 
 def load_workflows_file(path: str | Path) -> int:
@@ -292,7 +316,8 @@ def agent(
         safe_name = fn.__name__
         resolved_description = description or fn.__doc__ or f"Agent: {safe_name}"
         resolved_model = model or safe_name
-        reg = registry or _default_registry
+        # Use lazy initialization to avoid mutable global state at import time
+        reg = registry or _ensure_default_registry()
 
         metadata = AgentMetadata(
             safe_name=safe_name,
@@ -424,7 +449,8 @@ class AgentBuilder:
             The registered :class:`AgentMetadata`.
         """
         meta = self.build()
-        reg = registry or _default_registry
+        # Use lazy initialization to avoid mutable global state at import time
+        reg = registry or _ensure_default_registry()
         reg.register_or_update(meta)
         return meta
 
