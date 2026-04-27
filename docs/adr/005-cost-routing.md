@@ -26,6 +26,7 @@ We evaluated three routing strategies:
 | Weighted score | Deterministic; weighted sum of EMA cost, latency, quality | Greedy; never explores |
 | ε-greedy | Exploits best with probability 1-ε; random with ε | ε requires tuning; crude exploration |
 | Thompson Sampling | Bayesian; samples from Beta posterior | Principled; adapts automatically |
+| Thompson-Multi | Gaussian TS on scalarized utility | Incorporates cost, latency, quality |
 
 ## Decision
 
@@ -45,7 +46,7 @@ Three dimensions tracked:
 - `ema_latency_ms` — predicted latency
 - `ema_quality` — predicted quality score [0, 1]
 
-### Selection: Thompson Sampling (default)
+### Selection: Thompson Sampling (default — binary success/failure)
 
 Maintain a Beta distribution `Beta(successes+1, failures+1)` per model.
 At selection time, draw one sample from each candidate's distribution.
@@ -57,6 +58,9 @@ Properties:
 - New models (uniform prior) get explored fairly.
 - Catastrophic failure (many negatives) causes model to lose selections.
 
+**Limitation:** Only considers binary success/failure; cost, latency, and quality
+are tracked via EMA but not incorporated into the Thompson draw.
+
 ### Selection: Weighted Score (deterministic fallback)
 
 ```
@@ -65,6 +69,35 @@ score = (w_cost * ema_cost + w_latency * ema_latency/1000 + w_quality * (1 - ema
 ```
 
 Lowest score wins.  Configurable via `RoutingWeights`.
+
+### Selection: Thompson-Multi (multi-objective, v0.7.0+)
+
+**Addresses the "Beta posterior conflates objectives" issue.**
+
+Instead of sampling from `Beta(α, β)` on binary success, we:
+
+1. **Scalarize** cost, latency, and quality into a single utility score:
+   ```
+   utility = (w_cost * (1 - cost/max_cost) +
+              w_latency * (1 - latency/max_latency) +
+              w_quality * quality) / total_weight
+   ```
+
+2. **Sample** from a Gaussian posterior over utility:
+   - Prior: `N(μ=0.5, τ=1.0)` (precision = 1/variance)
+   - Posterior precision increases with observations: `τ_post = τ + n`
+   - Sample from `N(empirical_mean, 1/√τ_post)`
+
+3. **Select** the model with highest sampled utility.
+
+This incorporates all three objectives into the exploration-exploitation
+balance, rather than relying solely on binary success/failure.
+
+Usage:
+```python
+router = CostAwareRouter(strategy="thompson_multi")
+chosen = router.select_model(candidates)  # Gaussian TS on utility
+```
 
 ### Integration
 
@@ -88,6 +121,8 @@ The `routing://leaderboard` MCP resource exposes current cost rankings.
 **Risks & Mitigations:**
 - Model version changes invalidate historical stats:
   version-aware cache keys deferred to Phase 3.
-- Thompson Sampling with beta distribution assumes Bernoulli success:
+- ~~Thompson Sampling with beta distribution assumes Bernoulli success:
   adequate for binary success/failure but not quality scores.
-  Quality-aware routing (multi-armed bandit on quality) is a Phase 3 item.
+  Quality-aware routing (multi-armed bandit on quality) is a Phase 3 item.~~
+  **Resolved in v0.7.0** with `thompson_multi` strategy using Gaussian TS
+  on scalarized utility.

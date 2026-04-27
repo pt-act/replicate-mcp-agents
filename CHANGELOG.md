@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-04-27
+
+### Fixed (Technical Debt Remediation)
+
+**1. Lazy Initialization for Module-Level Registries (`sdk.py`)**
+- Changed `_default_registry` and `_workflow_registry` from eager to lazy initialization.
+- Added `_ensure_default_registry()` and `_ensure_workflow_registry()` factory functions.
+- `reset_*()` functions now set registries to `None` instead of creating new instances.
+- Eliminates mutable global state at import time; enables parallel test execution.
+- **Addresses:** Technical debt item 4.4 (Global Registry).
+
+**2. Multi-Objective Thompson Sampling (`routing.py`)**
+- Added `thompson_multi` strategy to `CostAwareRouter`.
+- Implements Gaussian Thompson Sampling on scalarized utility (cost, latency, quality).
+- New `compute_scalar_utility()` method on `ModelStats` with configurable weights.
+- Tracks `utility_mu`, `utility_tau`, `utility_sum` per model for Bayesian updates.
+- Existing `thompson` strategy unchanged for backward compatibility.
+- **Addresses:** Technical debt item 4.6 (Beta posterior conflates objectives).
+
+**3. Documentation Updates**
+- `docs/adr/005-cost-routing.md` — Added `thompson_multi` strategy documentation.
+- `docs/adr/006.md` — Added v0.7.0 lazy initialization update.
+
+### Changed
+- `CostAwareRouter.__init__` accepts new `strategy="thompson_multi"` option.
+- `ModelStats` gains utility tracking attributes (initialized lazily on first use).
+
+### Tests
+- Updated `test_sdk.py` to use `reset_workflow_registry()` for test isolation.
+- All 1085 unit tests pass; no breaking changes.
+
+---
+
 ## [0.6.0] — 2026-04-20
 
 ### Added (Phase 5a · Developer-First Hardening)

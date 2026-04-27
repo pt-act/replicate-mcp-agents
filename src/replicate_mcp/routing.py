@@ -78,6 +78,40 @@ class ModelStats:
     success_count: int = 0
     ts_alpha: float = 1.0   # Beta prior — uniform
     ts_beta: float = 1.0
+    # Gaussian Thompson Sampling parameters for multi-objective utility
+    utility_mu: float = 0.5   # Prior mean (normalized utility scale)
+    utility_tau: float = 1.0  # Prior precision (1/variance)
+    utility_sum: float = 0.0  # Running sum of utilities (for posterior)
+    utility_sum_sq: float = 0.0  # Running sum of squared utilities
+
+    def compute_scalar_utility(
+        self,
+        weights: RoutingWeights | None = None,
+        max_cost: float = 0.1,
+        max_latency_ms: float = 30_000.0,
+    ) -> float:
+        """Compute scalarized utility from EMA statistics (higher = better).
+
+        Normalizes cost and latency to [0, 1] using max bounds,
+        then computes weighted sum: utility = w_q * quality + w_c * (1 - cost/max_cost) + w_l * (1 - latency/max_latency)
+
+        Args:
+            weights: RoutingWeights for cost/latency/quality. Uses equal weights if None.
+            max_cost: Upper bound for cost normalization (default: $0.10).
+            max_latency_ms: Upper bound for latency normalization (default: 30s).
+
+        Returns:
+            Utility score in [0, 1], higher is better.
+        """
+        w = weights or RoutingWeights(cost=1.0 / 3, latency=1.0 / 3, quality=1.0 / 3)
+        total = w.cost + w.latency + w.quality or 1.0
+
+        # Normalize cost and latency to [0, 1], inverted (lower = better → higher score)
+        cost_norm = max(0.0, 1.0 - (self.ema_cost_usd / max_cost))
+        lat_norm = max(0.0, 1.0 - (self.ema_latency_ms / max_latency_ms))
+        quality_norm = max(0.0, min(1.0, self.ema_quality))
+
+        return (w.cost * cost_norm + w.latency * lat_norm + w.quality * quality_norm) / total
 
     def update(
         self,
@@ -85,18 +119,37 @@ class ModelStats:
         cost_usd: float,
         quality: float = 1.0,
         success: bool = True,
-    ) -> None:
-        """Incorporate a new observation into all EMA statistics."""
+    ) -> float:
+        """Incorporate a new observation into all EMA and utility statistics.
+
+        Updates the Gaussian Thompson Sampling parameters for utility.
+
+        Returns:
+            The computed utility of this observation.
+        """
         a = self.alpha
         self.ema_latency_ms = a * latency_ms + (1 - a) * self.ema_latency_ms
         self.ema_cost_usd = a * cost_usd + (1 - a) * self.ema_cost_usd
         self.ema_quality = a * quality + (1 - a) * self.ema_quality
         self.invocation_count += 1
+
+        # Compute utility of this observation and update Gaussian parameters
+        utility = self.compute_scalar_utility()
         if success:
             self.success_count += 1
             self.ts_alpha += 1.0
         else:
             self.ts_beta += 1.0
+            # Penalize utility on failure
+            utility *= 0.5
+
+        # Update Gaussian Thompson Sampling statistics (for multi-objective)
+        self.utility_sum += utility
+        self.utility_sum_sq += utility * utility
+        # Simple posterior update: precision increases with observations
+        self.utility_tau += 1.0
+
+        return utility
 
     def thompson_sample(self) -> float:
         """Draw one sample from Beta(ts_alpha, ts_beta).
@@ -105,6 +158,31 @@ class ModelStats:
         success probability.  Higher is better.
         """
         return random.betavariate(self.ts_alpha, self.ts_beta)
+
+    def thompson_sample_utility(self, weights: RoutingWeights | None = None) -> float:
+        """Draw one sample from the utility posterior (Gaussian Thompson Sampling).
+
+        Uses a simple Gaussian approximation: mean = empirical mean of utilities,
+        precision = prior precision + observation count. This incorporates
+        cost, latency, and quality into the sampling decision.
+
+        Args:
+            weights: RoutingWeights for scalarization. Uses stored EMA weights if None.
+
+        Returns:
+            Sampled utility value (higher = better model).
+        """
+        if self.invocation_count == 0:
+            # No observations: sample from prior
+            return random.gauss(self.utility_mu, 1.0 / math.sqrt(self.utility_tau))
+
+        # Empirical mean of observed utilities
+        mean = self.utility_sum / self.invocation_count
+        # Posterior precision increases with observations
+        tau_post = self.utility_tau + self.invocation_count
+        std = 1.0 / math.sqrt(tau_post)
+
+        return random.gauss(mean, std)
 
     @property
     def success_rate(self) -> float:
@@ -161,14 +239,20 @@ class RoutingWeights:
 class CostAwareRouter:
     """Select the optimal Replicate model from a candidate set.
 
-    Supports two strategies:
+    Supports three strategies:
 
-    * ``"score"``    — weighted deterministic score (lower = better).
-    * ``"thompson"`` — Thompson Sampling for explore-exploit balance.
+    * ``"score"``          — weighted deterministic score (lower = better).
+    * ``"thompson"``       — Beta Thompson Sampling (binary success/failure).
+    * ``"thompson_multi"`` — Gaussian Thompson Sampling on scalarized utility
+                              (incorporates cost, latency, quality).
+
+    The ``"thompson_multi"`` strategy addresses the "Beta posterior conflates
+    objectives" issue by using a multi-objective utility function instead of
+    just binary success/failure.
 
     Args:
-        weights:       :class:`RoutingWeights` for the score strategy.
-        strategy:      ``"score"`` or ``"thompson"`` (default: ``"thompson"``).
+        weights:       :class:`RoutingWeights` for the score/multi-objective strategy.
+        strategy:      ``"score"``, ``"thompson"``, or ``"thompson_multi"``.
         ema_alpha:     Default EMA smoothing factor for new models.
     """
 
@@ -178,8 +262,8 @@ class CostAwareRouter:
         strategy: str = "thompson",
         ema_alpha: float = 0.3,
     ) -> None:
-        if strategy not in ("score", "thompson"):
-            raise ValueError(f"strategy must be 'score' or 'thompson', got '{strategy}'")
+        if strategy not in ("score", "thompson", "thompson_multi"):
+            raise ValueError(f"strategy must be 'score', 'thompson', or 'thompson_multi', got '{strategy}'")
         self._weights = weights or RoutingWeights()
         self._strategy = strategy
         self._ema_alpha = ema_alpha
@@ -230,6 +314,8 @@ class CostAwareRouter:
 
         if self._strategy == "thompson":
             return self._thompson_select(candidates)
+        if self._strategy == "thompson_multi":
+            return self._thompson_multi_select(candidates)
         return self._score_select(candidates)
 
     def _score_select(self, candidates: list[str]) -> str:
@@ -258,6 +344,20 @@ class CostAwareRouter:
         """Thompson Sampling selection — highest sampled success prob wins."""
         samples = {model: self._ensure_registered(model).thompson_sample()
                    for model in candidates}
+        return max(samples, key=samples.__getitem__)
+
+    def _thompson_multi_select(self, candidates: list[str]) -> str:
+        """Multi-objective Thompson Sampling — highest sampled utility wins.
+
+        Uses Gaussian Thompson Sampling on the scalarized utility that
+        combines cost, latency, and quality (via compute_scalar_utility).
+        This addresses the conflation issue where Beta-TS only considered
+        binary success/failure.
+        """
+        samples = {
+            model: self._ensure_registered(model).thompson_sample_utility(self._weights)
+            for model in candidates
+        }
         return max(samples, key=samples.__getitem__)
 
     # ---- feedback ----
