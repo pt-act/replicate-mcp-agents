@@ -57,8 +57,8 @@ Zero configuration beyond environment variables (set in your shell):
 # Get API credentials from your Latitude dashboard
 
 # v2 (current): Uses project slug (e.g., "replicate-mcp-agents")
-LATITUDE_API_KEY="your-api-key"
-LATITUDE_PROJECT_SLUG="your-project-slug"
+LATITUDE_API_KEY="<your-api-key>"
+LATITUDE_PROJECT_SLUG="<your-project-slug>"
 export LATITUDE_API_KEY LATITUDE_PROJECT_SLUG
 
 # v1 (legacy): Uses numeric project ID
