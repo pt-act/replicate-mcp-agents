@@ -11,9 +11,15 @@ Prerequisites:
     pip install "replicate-mcp-agents[latitude]"
 
 Environment Variables:
-    LATITUDE_API_KEY     — Your Latitude API key
-    LATITUDE_PROJECT_ID  — Your Latitude project ID
-    REPLICATE_API_TOKEN  — Your Replicate API token
+    LATITUDE_API_KEY       — Your Latitude API key
+    LATITUDE_PROJECT_ID    — Your Latitude project ID (v1 - numeric)
+    LATITUDE_PROJECT_SLUG  — Your Latitude project slug (v2 - e.g., 'replicate-mcp-agents')
+    REPLICATE_API_TOKEN    — Your Replicate API token
+
+API Versions:
+    v1 (legacy): Uses numeric project_id (e.g., 32129)
+    v2 (current): Uses project slug (e.g., 'replicate-mcp-agents')
+    The client auto-detects based on which env var is set.
 
 API Documentation:
     https://gateway.latitude.so/api-docs/
@@ -38,7 +44,7 @@ async def example_fetch_prompt():
 
     config = LatitudeConfig()
     if not config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     client = LatitudeClient(config)
@@ -61,7 +67,7 @@ async def example_run_prompt():
 
     config = LatitudeConfig()
     if not config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     client = LatitudeClient(config)
@@ -90,7 +96,7 @@ async def example_conversation():
 
     config = LatitudeConfig()
     if not config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     client = LatitudeClient(config)
@@ -135,7 +141,7 @@ async def example_version_management():
 
     config = LatitudeConfig()
     if not config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     client = LatitudeClient(config)
@@ -176,7 +182,7 @@ async def example_tracing():
 
     config = LatitudeConfig()
     if not config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     client = LatitudeClient(config)
@@ -201,7 +207,7 @@ async def example_plugin_integration():
 
     lat_config = LatitudeConfig()
     if not lat_config.is_configured:
-        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID environment variables")
+        print("Set LATITUDE_API_KEY and LATITUDE_PROJECT_SLUG (v2) or LATITUDE_PROJECT_ID (v1) environment variables")
         return
 
     lat_plugin = LatitudePlugin(lat_config)
