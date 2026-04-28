@@ -35,12 +35,18 @@ load = [
 http = [
     "uvicorn>=0.29.0,<1.0.0",
 ]
+# Latitude integration — install with: pip install "replicate-mcp-agents[latitude]"
+# Enables: Prompt management, tracing, evaluations via latitude.sh
+latitude = [
+    "httpx>=0.27.0,<0.28.0",
+]
 # Full dev extras — inlined to avoid self-referencing extras (Poetry compat)
 all = [
     "opentelemetry-sdk>=1.26.0,<2.0.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.26.0,<2.0.0",
     "locust>=2.31.0,<3.0.0",
     "uvicorn>=0.29.0,<1.0.0",
+    "httpx>=0.27.0,<0.28.0",
 ]
 
 [project.scripts]

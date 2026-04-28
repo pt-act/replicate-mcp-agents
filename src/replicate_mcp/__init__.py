@@ -40,6 +40,10 @@ Phase 6 public surface:
       ``PIIMaskPlugin``, ``ContentFilterPlugin``, ``CostCapPlugin``.
     - ``replicate-agent doctor`` — diagnostic command for first-run health checks.
     - ``replicate-agent agents run --dry-run`` — cost estimation without API call.
+
+Phase 7 public surface (optional extras):
+    - :mod:`~replicate_mcp.latitude` — Latitude.sh integration for prompt management,
+      tracing, evaluations, and datasets. Install with ``pip install "replicate-mcp-agents[latitude]"``.
 """
 
 from replicate_mcp.cache import ResultCache
@@ -83,6 +87,22 @@ from replicate_mcp.sdk import (
 from replicate_mcp.utils.audit import AuditLogger, AuditRecord
 from replicate_mcp.utils.router_state import RouterStateManager
 from replicate_mcp.worker_server import WorkerHttpApp, serve_worker
+
+# Latitude integration (optional extra)
+try:
+    from replicate_mcp.latitude import (
+        LatitudeClient,
+        LatitudeConfig,
+        LatitudeEvalResult,
+        LatitudePaymentRequiredError,
+        LatitudePlugin,
+        LatitudePrompt,
+        LatitudeTrace,
+    )
+
+    HAS_LATITUDE = True
+except ImportError:
+    HAS_LATITUDE = False
 
 __version__ = "0.6.0"
 
@@ -143,4 +163,13 @@ __all__ = [
     "ServerError",
     "ClientError",
     "is_retryable_error",
+    # Phase 7 — Latitude integration (if installed)
+    "HAS_LATITUDE",
+    "LatitudeClient",
+    "LatitudeConfig",
+    "LatitudeEvalResult",
+    "LatitudePaymentRequiredError",
+    "LatitudePlugin",
+    "LatitudePrompt",
+    "LatitudeTrace",
 ]
