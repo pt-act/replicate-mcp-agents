@@ -10,8 +10,14 @@ Provides comprehensive integration with Latitude for:
 API Base URL: https://gateway.latitude.so/api/v3
 
 Environment Variables:
-    LATITUDE_API_KEY      — Your Latitude API key (required)
-    LATITUDE_PROJECT_ID   — Default project ID (required)
+    LATITUDE_API_KEY       — Your Latitude API key (required)
+    LATITUDE_PROJECT_ID    — Default project ID (v1 - numeric)
+    LATITUDE_PROJECT_SLUG  — Default project slug (v2 - e.g., "replicate-mcp-agents")
+
+API Versions:
+    v1 (legacy): Uses numeric project_id (e.g., 32129)
+    v2 (current): Uses project slug (e.g., "replicate-mcp-agents")
+    The client auto-detects based on which env var is set (slug takes precedence).
 
 Key API Endpoints Implemented:
     * GET /projects/{projectId}/versions/{versionUuid}/documents/{path} — Fetch prompt
@@ -91,18 +97,22 @@ from replicate_mcp.exceptions import ReplicateMCPError
 class LatitudeConfig:
     """Configuration for Latitude integration.
 
+    Supports both v1 (project_id) and v2 (project_slug) APIs.
+
     Attributes:
-        api_key:      Latitude API key. Falls back to LATITUDE_API_KEY env var.
-        project_id:   Default project ID. Falls back to LATITUDE_PROJECT_ID env var.
-        base_url:     API base URL. Default: https://api.latitude.sh
-        timeout_s:    Request timeout in seconds.
-        enable_tracing:   Emit traces for agent executions.
+        api_key:        Latitude API key. Falls back to LATITUDE_API_KEY env var.
+        project_id:     Default project ID (v1). Falls back to LATITUDE_PROJECT_ID env var.
+        project_slug:   Default project slug (v2). Falls back to LATITUDE_PROJECT_SLUG env var.
+        base_url:       API base URL. Default: https://gateway.latitude.so/api/v3
+        timeout_s:      Request timeout in seconds.
+        enable_tracing:     Emit traces for agent executions.
         enable_prompt_caching: Cache fetched prompts in memory.
-        cache_ttl_s:  Prompt cache TTL in seconds.
+        cache_ttl_s:    Prompt cache TTL in seconds.
     """
 
     api_key: str | None = None
-    project_id: str | None = None
+    project_id: str | None = None  # v1: numeric ID
+    project_slug: str | None = None  # v2: project name/slug
     base_url: str = "https://gateway.latitude.so/api/v3"
     timeout_s: float = 30.0
     enable_tracing: bool = True
@@ -115,11 +125,41 @@ class LatitudeConfig:
             self.api_key = os.environ.get("LATITUDE_API_KEY")
         if self.project_id is None:
             self.project_id = os.environ.get("LATITUDE_PROJECT_ID")
+        if self.project_slug is None:
+            self.project_slug = os.environ.get("LATITUDE_PROJECT_SLUG")
 
     @property
     def is_configured(self) -> bool:
-        """Return True if both api_key and project_id are set."""
-        return bool(self.api_key and self.project_id)
+        """Return True if api_key and project identifier (id or slug) are set."""
+        return bool(self.api_key and (self.project_id or self.project_slug))
+
+    def get_project_id(self, override: str | None = None) -> str:
+        """Get the project identifier to use for API calls.
+
+        v2 uses project_slug (e.g., 'replicate-mcp-agents').
+        v1 uses project_id (numeric or string).
+
+        Prefers slug if available (v2), falls back to id (v1).
+
+        Args:
+            override: Optional override value.
+
+        Returns:
+            Project identifier for URL construction.
+
+        Raises:
+            LatitudeNotConfiguredError: If no project identifier is available.
+        """
+        if override:
+            return override
+        if self.project_slug:
+            return self.project_slug
+        if self.project_id:
+            return self.project_id
+        raise LatitudeNotConfiguredError(
+            "No project identifier configured. Set LATITUDE_PROJECT_SLUG (v2) "
+            "or LATITUDE_PROJECT_ID (v1) environment variable."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +178,13 @@ class LatitudeError(ReplicateMCPError):
 class LatitudeNotConfiguredError(LatitudeError):
     """Raised when Latitude is used without proper configuration."""
 
-    def __init__(self) -> None:
-        super().__init__(
-            "Latitude not configured. Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID "
-            "environment variables or pass to LatitudeConfig."
-        )
+    def __init__(self, message: str | None = None) -> None:
+        if message is None:
+            message = (
+                "Latitude not configured. Set LATITUDE_API_KEY and LATITUDE_PROJECT_ID "
+                "environment variables or pass to LatitudeConfig."
+            )
+        super().__init__(message)
 
 
 class LatitudeAPIError(LatitudeError):
@@ -357,6 +399,7 @@ class LatitudeClient:
         path: str,
         version_uuid: str = "live",
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> LatitudePrompt:
         """Fetch a prompt from Latitude.
 
@@ -385,7 +428,7 @@ class LatitudeClient:
                     return prompt
 
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         # Correct endpoint per API docs
         url = f"/projects/{pid}/versions/{version_uuid}/documents/{path}"
@@ -431,6 +474,7 @@ class LatitudeClient:
         background: bool = False,
         version_uuid: str = "live",
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> dict[str, Any]:
         """Execute a prompt via Latitude API.
 
@@ -449,7 +493,7 @@ class LatitudeClient:
             Response dict with conversation UUID, usage, cost, etc.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         url = f"/projects/{pid}/versions/{version_uuid}/documents/run"
 
@@ -481,6 +525,7 @@ class LatitudeClient:
         content: str = "",
         version_uuid: str = "live",
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> LatitudePrompt:
         """Get existing prompt or create it if not found.
 
@@ -496,7 +541,7 @@ class LatitudeClient:
             LatitudePrompt instance.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         url = f"/projects/{pid}/versions/{version_uuid}/documents/get-or-create"
 
@@ -525,6 +570,7 @@ class LatitudeClient:
         force: bool = False,
         version_uuid: str = "live",
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> LatitudePrompt:
         """Create new prompt or update existing one.
 
@@ -541,7 +587,7 @@ class LatitudeClient:
             LatitudePrompt instance.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         url = f"/projects/{pid}/versions/{version_uuid}/documents/create-or-update"
 
@@ -567,6 +613,7 @@ class LatitudeClient:
         self,
         name: str,
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> dict[str, Any]:
         """Create a new draft version (commit) for a project.
 
@@ -580,7 +627,7 @@ class LatitudeClient:
             Version dict with id, uuid, status, etc.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         response = await client.post(
             f"/projects/{pid}/versions",
@@ -596,6 +643,7 @@ class LatitudeClient:
         title: str | None = None,
         description: str | None = None,
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> dict[str, Any]:
         """Publish a draft version to make it live/production.
 
@@ -611,7 +659,7 @@ class LatitudeClient:
             Published version dict.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         url = f"/projects/{pid}/versions/{version_uuid}/publish"
         payload: dict[str, Any] = {}
@@ -822,6 +870,7 @@ class LatitudeClient:
         eval_name: str,
         output: dict[str, Any],
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> LatitudeEvalResult:
         """Run an evaluation on a trace.
 
@@ -835,7 +884,7 @@ class LatitudeClient:
             LatitudeEvalResult with score and feedback.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         response = await client.post(
             f"/projects/{pid}/evaluations",
@@ -857,10 +906,14 @@ class LatitudeClient:
             metadata=data.get("metadata", {}),
         )
 
-    async def list_evals(self, project_id: str | None = None) -> list[dict[str, Any]]:
+    async def list_evals(
+        self,
+        project_id: str | None = None,
+        project_slug: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List available evaluations in a project."""
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         response = await client.get(f"/projects/{pid}/evaluations")
         response.raise_for_status()
@@ -873,10 +926,11 @@ class LatitudeClient:
         name: str,
         description: str = "",
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> dict[str, Any]:
         """Create a new dataset for training data."""
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         response = await client.post(
             f"/projects/{pid}/datasets",
@@ -894,6 +948,7 @@ class LatitudeClient:
         dataset_id: str,
         trace_ids: list[str],
         project_id: str | None = None,
+        project_slug: str | None = None,
     ) -> dict[str, Any]:
         """Export specific traces to a dataset.
 
@@ -906,7 +961,7 @@ class LatitudeClient:
             Export result with record count.
         """
         client = await self._get_client()
-        pid = project_id or self.config.project_id
+        pid = self.config.get_project_id(project_id or project_slug)
 
         response = await client.post(
             f"/projects/{pid}/datasets/{dataset_id}/traces",

@@ -55,10 +55,20 @@ Automatic tracing via the existing plugin system:
 Zero configuration beyond environment variables (set in your shell):
 ```bash
 # Get API credentials from your Latitude dashboard
-LATITUDE_API_KEY="sk-..."      # pragma: allowlist secret
-LATITUDE_PROJECT_ID="proj-..."
-export LATITUDE_API_KEY LATITUDE_PROJECT_ID
+
+# v2 (current): Uses project slug (e.g., "replicate-mcp-agents")
+LATITUDE_API_KEY="your-api-key"
+LATITUDE_PROJECT_SLUG="your-project-slug"
+export LATITUDE_API_KEY LATITUDE_PROJECT_SLUG
+
+# v1 (legacy): Uses numeric project ID
+# LATITUDE_PROJECT_ID="12345"
 ```
+
+**API Version Support**: The client auto-detects v1 vs v2 based on which project identifier is configured.
+- v2: `LATITUDE_PROJECT_SLUG` (e.g., `replicate-mcp-agents`)
+- v1: `LATITUDE_PROJECT_ID` (numeric)
+- If both set, `project_slug` takes precedence (v2).
 
 ### 3. OTEL Bridge (`LatitudeObservabilityBridge`)
 
