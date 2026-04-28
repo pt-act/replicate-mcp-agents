@@ -22,10 +22,8 @@ API Documentation:
 from __future__ import annotations
 
 import asyncio
-import os
 
 from replicate_mcp import (
-    AgentBuilder,
     LatitudeClient,
     LatitudeConfig,
     LatitudePlugin,
