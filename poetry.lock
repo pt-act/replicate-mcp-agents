@@ -3509,12 +3509,13 @@ test = ["coverage[toml]", "zope.event", "zope.testing"]
 testing = ["coverage[toml]", "zope.event", "zope.testing"]
 
 [extras]
-all = ["locust", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk", "uvicorn"]
+all = ["httpx", "locust", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk", "uvicorn"]
 http = ["uvicorn"]
+latitude = ["httpx"]
 load = ["locust"]
 otel = ["opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-sdk"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "14c18784f846ca08bf5874242c543f4a9f0214f7fbe6a108aa6b2498b66fc554"
+content-hash = "521d432120d85c38ec30a7df1de5668174dc72d5af4572c62561928688bb7b18"

@@ -52,11 +52,12 @@ Automatic tracing via the existing plugin system:
 - `on_agent_result()` — finalize trace with output, latency, cost
 - `on_error()` — record error in trace
 
-Zero configuration beyond environment variables:
+Zero configuration beyond environment variables (set in your shell):
 ```bash
-export LATITUDE_API_KEY="lat_..."
-export LATITUDE_PROJECT_ID="proj_..."
-export LATITUDE_API_URL="https://gateway.latitude.so"  # Default
+# Get API credentials from your Latitude dashboard
+LATITUDE_API_KEY="sk-..."      # pragma: allowlist secret
+LATITUDE_PROJECT_ID="proj-..."
+export LATITUDE_API_KEY LATITUDE_PROJECT_ID
 ```
 
 ### 3. OTEL Bridge (`LatitudeObservabilityBridge`)
