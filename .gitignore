@@ -16,3 +16,4 @@ htmlcov/
 *.log
 .personal/
 .agents/
+.env
