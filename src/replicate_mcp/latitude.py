@@ -230,9 +230,12 @@ class LatitudeTrace:
         """Record an error that occurred during execution."""
         self.success = False
         self.error_message = str(error)
-        self.end_time = __import__("time").time()
-        if self.latency_ms is None and self.start_time is not None:
-            self.latency_ms = (self.end_time - self.start_time) * 1000
+        end_time = __import__("time").time()
+        self.end_time = end_time
+        if self.latency_ms is None:
+            start = self.start_time
+            if start is not None:
+                self.latency_ms = (end_time - start) * 1000
 
     def to_api_payload(self) -> dict[str, Any]:
         """Convert to the payload format expected by Latitude API."""
@@ -469,7 +472,8 @@ class LatitudeClient:
             )
         response.raise_for_status()
 
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     async def get_or_create_prompt(
         self,
@@ -583,7 +587,8 @@ class LatitudeClient:
             json={"name": name}
         )
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     async def publish_version(
         self,
@@ -617,7 +622,8 @@ class LatitudeClient:
 
         response = await client.post(url, json=payload)
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     # ---- Conversations ----
 
@@ -648,7 +654,8 @@ class LatitudeClient:
 
         response = await client.post(url, json=payload)
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     async def get_conversation(self, conversation_uuid: str) -> dict[str, Any]:
         """Retrieve conversation history.
@@ -670,7 +677,8 @@ class LatitudeClient:
                 status_code=404,
             )
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     async def stop_conversation(self, conversation_uuid: str) -> None:
         """Stop an active conversation.
@@ -856,9 +864,9 @@ class LatitudeClient:
 
         response = await client.get(f"/projects/{pid}/evaluations")
         response.raise_for_status()
-        return response.json().get("evaluations", [])
-
-    # ---- Datasets ----
+        data: dict[str, Any] = response.json()
+        evaluations: list[dict[str, Any]] = data.get("evaluations", [])
+        return evaluations
 
     async def create_dataset(
         self,
@@ -878,7 +886,8 @@ class LatitudeClient:
             },
         )
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     async def export_traces_to_dataset(
         self,
@@ -904,7 +913,8 @@ class LatitudeClient:
             json={"traceIds": trace_ids},
         )
         response.raise_for_status()
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
 
 # ---------------------------------------------------------------------------
