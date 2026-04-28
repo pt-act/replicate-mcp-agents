@@ -65,12 +65,12 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, Protocol
-from urllib.parse import urljoin
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 # Lazy import for optional httpx dependency
 try:
@@ -231,7 +231,7 @@ class LatitudeTrace:
         self.success = False
         self.error_message = str(error)
         self.end_time = __import__("time").time()
-        if self.latency_ms is None and self.start_time:
+        if self.latency_ms is None and self.start_time is not None:
             self.latency_ms = (self.end_time - self.start_time) * 1000
 
     def to_api_payload(self) -> dict[str, Any]:
@@ -316,31 +316,30 @@ class LatitudeClient:
 
     async def validate_connection(self) -> dict[str, Any]:
         """Validate API connectivity and return diagnostics.
-        
+
         Returns:
             Dict with 'success', 'status', 'endpoint', and 'response' keys.
             Useful for debugging API configuration issues.
         """
         if not self.config.is_configured:
             return {"success": False, "error": "Not configured", "details": "LATITUDE_API_KEY or LATITUDE_PROJECT_ID missing"}
-        
+
         client = await self._get_client()
-        
+
         # Skip health check - try traces endpoint directly
-        pid = self.config.project_id
         try:
             test_resp = await client.post(
-                f"/traces",
+                "/traces",
                 json={"name": "validation-test", "agentId": "validation"}
             )
             return {
                 "success": test_resp.status_code < 400,
                 "status": test_resp.status_code,
-                "endpoint": f"/traces",
+                "endpoint": "/traces",
                 "response": test_resp.text[:200] if test_resp.status_code >= 400 else "OK"
             }
         except Exception as e:
-            return {"success": False, "error": str(e), "endpoint": f"/traces"}
+            return {"success": False, "error": str(e), "endpoint": "/traces"}
 
     async def __aenter__(self) -> LatitudeClient:
         return self
@@ -943,11 +942,30 @@ class LatitudeTraceContext:
 # Plugin Integration
 # ---------------------------------------------------------------------------
 
+# Runtime import to avoid circular imports
+try:
+    from replicate_mcp.plugins.base import BasePlugin as _BasePlugin
+    from replicate_mcp.plugins.base import PluginMetadata as _PluginMetadata
+    _BASE_PLUGIN_AVAILABLE = True
+except ImportError:
+    # Define stub classes if plugin base not available
+    class _BasePlugin:  # type: ignore[no-redef]
+        """Stub base plugin when plugin system unavailable."""
 
-from replicate_mcp.plugins.base import BasePlugin, PluginMetadata
+        def __init__(self) -> None:
+            pass
+
+    class _PluginMetadata:  # type: ignore[no-redef]
+        """Stub metadata when plugin system unavailable."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    _BASE_PLUGIN_AVAILABLE = False
 
 
-class LatitudePlugin(BasePlugin):
+class LatitudePlugin(_BasePlugin):
     """Plugin that automatically traces all agent executions to Latitude.
 
     Integrates with the existing plugin system to capture:
@@ -976,8 +994,8 @@ class LatitudePlugin(BasePlugin):
         self._active_traces: dict[str, LatitudeTrace] = {}
 
     @property
-    def metadata(self) -> PluginMetadata:
-        return PluginMetadata(
+    def metadata(self) -> _PluginMetadata:
+        return _PluginMetadata(
             name="latitude",
             version="1.0.0",
             description="Latitude.sh integration for prompt management and tracing",
