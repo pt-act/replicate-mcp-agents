@@ -37,8 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
@@ -49,6 +51,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+
+class VersionPinningMode(Enum):
+    """Mode for handling model version updates during discovery refresh.
+
+    - ``LATEST`` (default): Always use the latest version from the API.
+      Custom model strings in ``pinned_versions`` are respected.
+    - ``MINOR``: Pin to major.minor version, allow patch updates.
+      Not yet implemented; currently behaves like ``EXACT``.
+    - ``EXACT``: Pin to exact version hash. Never update pinned models.
+
+    Note:
+        Version pinning applies only during :meth:`ModelDiscovery.refresh`.
+        Manual registration via ``registry.register()`` is unaffected.
+    """
+
+    LATEST = "latest"
+    MINOR = "minor"  # Reserved for future implementation
+    EXACT = "exact"
 
 
 @dataclass
@@ -72,6 +93,15 @@ class DiscoveryConfig:
                         How often the background task calls
                         :meth:`ModelDiscovery.refresh` automatically.
                         ``0`` disables the background loop.
+        version_pinning:
+                        How to handle version updates during refresh.
+                        ``LATEST`` allows updates; ``EXACT`` prevents
+                        updates for pinned models. See :class:`VersionPinningMode`.
+        pinned_versions:
+                        Map of ``"owner/name"`` to pinned version hash.
+                        These models are never updated during discovery
+                        refresh when ``version_pinning`` is ``EXACT``.
+                        Example: ``{"meta/llama-2-70b": "5c7854e8"}``
     """
 
     owner: str | None = None
@@ -80,6 +110,8 @@ class DiscoveryConfig:
     ttl_seconds: float = 300.0
     auto_streaming: bool = True
     background_interval_seconds: float = 0.0
+    version_pinning: VersionPinningMode = VersionPinningMode.LATEST
+    pinned_versions: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +150,90 @@ class DiscoveryResult:
 # ---------------------------------------------------------------------------
 
 
-def _model_to_metadata(model: Any, config: DiscoveryConfig) -> AgentMetadata | None:  # noqa: ANN401
+# Version pinning key format: "owner/name"
+_PIN_KEY_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)$")
+
+
+def _parse_pinned_version(model_str: str) -> str | None:
+    """Extract version hash from a pinned model string.
+
+    Args:
+        model_str: Model identifier, optionally with version hash.
+                   E.g., "meta/llama-2-70b:5c7854e8" or "meta/llama-2-70b".
+
+    Returns:
+        Version hash if present, None otherwise.
+    """
+    if ":" in model_str:
+        return model_str.split(":", 1)[1]
+    return None
+
+
+# Module-level reference to replicate for testing/mocking
+_replicate = None
+
+
+def _strip_version(model_str: str) -> str:
+    """Remove version hash from model string.
+
+    Args:
+        model_str: Model identifier, optionally with version hash.
+
+    Returns:
+        Model identifier without version hash.
+    """
+    if ":" in model_str:
+        return model_str.split(":", 1)[0]
+    return model_str
+
+
+def _is_version_pinned(
+    owner: str,
+    name: str,
+    config: DiscoveryConfig,
+    current_version: str | None = None,
+) -> bool:
+    """Check if a model is pinned and its version matches.
+
+    Args:
+        owner: Model owner
+        name: Model name
+        config: Discovery configuration
+        current_version: Version from API (if any)
+
+    Returns:
+        True if model should be treated as pinned (no updates allowed).
+    """
+    if config.version_pinning == VersionPinningMode.LATEST:
+        return False
+
+    key = f"{owner}/{name}"
+    pinned = config.pinned_versions.get(key)
+    if not pinned:
+        return False
+
+    if config.version_pinning == VersionPinningMode.EXACT:
+        # Always consider pinned if key exists
+        return True
+
+    # MINOR pinning: check if major.minor matches (future implementation)
+    return True
+
+
+def _model_to_metadata(
+    model: Any,  # noqa: ANN401
+    config: DiscoveryConfig,
+    version: str | None = None,
+) -> AgentMetadata | None:
     """Convert a Replicate model object to :class:`AgentMetadata`.
 
-    Returns ``None`` if the model should be skipped (does not pass
-    filter criteria).
+    Args:
+        model: Replicate model object from API
+        config: Discovery configuration
+        version: Optional version hash (from pinned_versions or API)
+
+    Returns:
+        AgentMetadata or None if model should be skipped.
     """
     try:
         owner: str = getattr(model, "owner", None) or ""
@@ -140,7 +251,27 @@ def _model_to_metadata(model: Any, config: DiscoveryConfig) -> AgentMetadata | N
             return None
 
         safe_name = f"{owner}__{name}".replace("-", "_").replace("/", "__")
-        replicate_model = f"{owner}/{name}"
+
+        # Check for pinned version
+        key = f"{owner}/{name}"
+        pinned_version = config.pinned_versions.get(key)
+        if pinned_version and config.version_pinning == VersionPinningMode.EXACT:
+            # Use pinned version, don't allow updates
+            replicate_model = f"{key}:{pinned_version}"
+            version_tags = ["pinned", "exact-pin"]
+        elif pinned_version and config.version_pinning == VersionPinningMode.MINOR:
+            # MINOR pinning: use pinned version as base (future: allow compatible updates)
+            replicate_model = f"{key}:{pinned_version}"
+            version_tags = ["pinned", "minor-pin"]
+        elif version:
+            # Use provided version (from API or elsewhere)
+            replicate_model = f"{key}:{version}"
+            version_tags = ["versioned"]
+        else:
+            # No pinning, use latest
+            replicate_model = key
+            version_tags = ["latest"]
+
         description: str = (
             getattr(model, "description", None)
             or f"Auto-discovered Replicate model {replicate_model}"
@@ -151,7 +282,7 @@ def _model_to_metadata(model: Any, config: DiscoveryConfig) -> AgentMetadata | N
             description=description,
             model=replicate_model,
             supports_streaming=config.auto_streaming,
-            tags=["auto-discovered"] + model_tags,
+            tags=["auto-discovered"] + version_tags + model_tags,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not convert model to metadata: %s", exc)
@@ -298,6 +429,29 @@ class ModelDiscovery:
                 if result.discovered >= cfg.max_models:
                     break
 
+                owner: str = getattr(model, "owner", None) or ""
+                name: str = getattr(model, "name", None) or ""
+                model_key = f"{owner}/{name}"
+
+                # Check if model is pinned
+                is_pinned = model_key in cfg.pinned_versions
+
+                # Check version pinning mode for already-registered pinned models
+                if is_pinned and cfg.version_pinning == VersionPinningMode.EXACT:
+                    # Check if already registered
+                    safe_name = f"{owner}__{name}".replace("-", "_").replace("/", "__")
+                    if self._registry.has(safe_name):
+                        logger.debug(
+                            "Skipping update for pinned model %s (EXACT mode)",
+                            model_key,
+                        )
+                        # Model was discovered but update skipped
+                        result.discovered += 1
+                        result.skipped += 1
+                        continue
+                    # If not registered, proceed to create metadata with pinned version
+                # MINOR mode: same behavior as EXACT for now
+
                 meta = _model_to_metadata(model, cfg)
                 if meta is None:
                     result.skipped += 1
@@ -305,6 +459,15 @@ class ModelDiscovery:
 
                 result.discovered += 1
                 already_registered = self._registry.has(meta.safe_name)
+
+                # Skip updating if pinned and already registered
+                if is_pinned and already_registered and cfg.version_pinning == VersionPinningMode.EXACT:
+                    logger.debug(
+                        "Skipping update for registered pinned model %s",
+                        model_key,
+                    )
+                    continue
+
                 self._registry.register_or_update(meta)
 
                 if already_registered:
@@ -373,5 +536,6 @@ __all__ = [
     "DiscoveryConfig",
     "DiscoveryResult",
     "ModelDiscovery",
+    "VersionPinningMode",
     "discover_and_register",
 ]

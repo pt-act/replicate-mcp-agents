@@ -49,6 +49,7 @@ from enum import Enum
 from typing import Any
 
 from replicate_mcp.exceptions import ReplicateMCPError
+from replicate_mcp.worker_circuit_breaker import WorkerCircuitState
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,34 @@ class NoHealthyNodesError(ReplicateMCPError):
 
     def __init__(self) -> None:
         super().__init__("No healthy worker nodes available")
+
+
+class WorkerCircuitOpenError(ReplicateMCPError):
+    """Raised when attempting to route to a worker with an OPEN circuit breaker.
+
+    This exception signals that a remote worker's circuit breaker is in the
+    OPEN state, indicating recent repeated failures. The coordinator should
+    route to an alternative worker or retry after the recovery timeout.
+
+    Attributes:
+        node_id: The identifier of the worker with the open circuit.
+        circuit_state: The circuit state snapshot at the time of rejection.
+        retry_in: Estimated seconds until the circuit may close, or None.
+    """
+
+    def __init__(
+        self,
+        node_id: str,
+        circuit_state: WorkerCircuitState,
+        retry_in: float | None = None,
+    ) -> None:
+        message = f"Worker {node_id} circuit is {circuit_state.state}"
+        if retry_in is not None:
+            message += f" (retry in {retry_in:.1f}s)"
+        super().__init__(message)
+        self.node_id = node_id
+        self.circuit_state = circuit_state
+        self.retry_in = retry_in
 
 
 # ---------------------------------------------------------------------------
@@ -482,16 +511,42 @@ class DistributedExecutor:
     # ---- task submission ----
 
     def _least_loaded_all(self) -> WorkerNode | RemoteWorkerNode | None:
-        """Return the least-loaded node across local and remote pools."""
+        """Return the least-loaded node across local and remote pools.
+
+        Filters out remote nodes with OPEN circuit breakers to avoid
+        routing to unhealthy workers. HALF_OPEN nodes are included but
+        their load is artificially increased to reduce selection probability.
+        """
         candidates: list[WorkerNode | RemoteWorkerNode] = []
         candidates.extend(self._registry.healthy_nodes)
-        candidates.extend(
-            n for n in self._remote_nodes.values()
-            if n.health != NodeHealth.UNHEALTHY
-        )
+
+        # Filter remote nodes by circuit state and health (v0.8.0)
+        for n in self._remote_nodes.values():
+            # Skip UNHEALTHY nodes
+            if n.health == NodeHealth.UNHEALTHY:
+                continue
+
+            # Skip nodes with OPEN circuit (definitely unhealthy)
+            if isinstance(n, RemoteWorkerNode) and n.is_circuit_open():
+                logger.debug(
+                    "Skipping remote node %r with OPEN circuit", n.node_id
+                )
+                continue
+
+            candidates.append(n)
+
         if not candidates:
             return None
-        return min(candidates, key=lambda n: n.load)
+
+        # For HALF_OPEN nodes, add virtual load to reduce selection probability
+        def effective_load(n: WorkerNode | RemoteWorkerNode) -> float:
+            base_load = n.load
+            if isinstance(n, RemoteWorkerNode) and n.is_circuit_half_open():
+                # HALF_OPEN nodes get 50% penalty to reduce selection
+                return base_load * 1.5
+            return base_load
+
+        return min(candidates, key=effective_load)
 
     async def submit(
         self,
@@ -735,6 +790,42 @@ class HttpWorkerTransport(WorkerTransport):
         except Exception:  # noqa: BLE001
             return False
 
+    async def get_circuit_state(self) -> WorkerCircuitState | None:
+        """GET ``/health`` and extract circuit breaker state if available.
+
+        Returns the circuit state from the worker's health endpoint, or None
+        if the worker does not have circuit breaker enabled or is unreachable.
+
+        Returns:
+            WorkerCircuitState if circuit breaker data is present in the
+            health response, otherwise None.
+        """
+        try:
+            import httpx  # noqa: PLC0415
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self._base_url}/health")
+                if response.status_code != 200:
+                    return None
+                data: dict[str, Any] = response.json()
+                circuit_data = data.get("circuit")
+                if not circuit_data:
+                    return None
+
+                # Parse circuit state from response
+                return WorkerCircuitState(
+                    state=circuit_data.get("state", "unknown"),
+                    failure_count=circuit_data.get("failure_count", 0),
+                    success_count=circuit_data.get("success_count", 0),
+                    last_failure_at=circuit_data.get("last_failure_at"),
+                    recovery_timeout=circuit_data.get("recovery_timeout", 60.0),
+                    half_open_max_calls=circuit_data.get("half_open_max_calls", 3),
+                    half_open_calls=circuit_data.get("half_open_calls", 0),
+                    can_execute=circuit_data.get("can_execute", True),
+                )
+        except Exception:  # noqa: BLE001
+            return None
+
     async def get_metrics(self) -> dict[str, Any]:
         """GET ``/metrics`` and return the parsed JSON body."""
         try:
@@ -791,6 +882,51 @@ class RemoteWorkerNode:
         self._health: NodeHealth = NodeHealth.HEALTHY
         self._active_tasks: int = 0
         self._total_processed: int = 0
+        # Circuit breaker state cache (v0.8.0)
+        self._circuit_state: WorkerCircuitState | None = None
+        self._circuit_state_timestamp: float = 0.0
+
+    @property
+    def circuit_state(self) -> WorkerCircuitState | None:
+        """Cached circuit breaker state from last health check, or None."""
+        return self._circuit_state
+
+    async def check_circuit_state(self) -> WorkerCircuitState | None:
+        """Fetch and cache the circuit breaker state from the worker.
+
+        This method queries the transport for the worker's circuit state
+        and caches it locally. The cached state is used for routing
+        decisions by the DistributedExecutor.
+
+        Returns:
+            WorkerCircuitState if the worker has circuit breaker enabled,
+            otherwise None.
+        """
+        if isinstance(self._transport, HttpWorkerTransport):
+            state = await self._transport.get_circuit_state()
+            self._circuit_state = state
+            self._circuit_state_timestamp = time.monotonic()
+            return state
+        return None
+
+    def is_circuit_open(self) -> bool:
+        """Check if the cached circuit state indicates an OPEN circuit.
+
+        Returns True if the circuit is OPEN (should not route new tasks).
+        Returns False if circuit is CLOSED, HALF_OPEN, or unknown.
+        """
+        if self._circuit_state is None:
+            return False  # Assume healthy if no state
+        return self._circuit_state.state == "open"
+
+    def is_circuit_half_open(self) -> bool:
+        """Check if the cached circuit state indicates a HALF_OPEN circuit.
+
+        Returns True if the circuit is HALF_OPEN (limited probe traffic).
+        """
+        if self._circuit_state is None:
+            return False
+        return self._circuit_state.state == "half_open"
 
     @property
     def node_id(self) -> str:
@@ -854,7 +990,38 @@ class RemoteWorkerNode:
         """Dispatch a task via the transport and resolve *handle* with the result.
 
         This method creates an asyncio task so the call returns immediately.
+
+        Raises:
+            WorkerCircuitOpenError: If the worker's circuit breaker is OPEN
+                and the task should be routed to another worker.
         """
+        # Check circuit breaker state before dispatching (v0.8.0)
+        circuit_state = await self.check_circuit_state()
+        if circuit_state is not None:
+            if circuit_state.state == "open":
+                # Calculate retry-in time
+                retry_in: float | None = None
+                if circuit_state.last_failure_at is not None:
+                    elapsed = time.monotonic() - circuit_state.last_failure_at
+                    retry_in = max(0, circuit_state.recovery_timeout - elapsed)
+                raise WorkerCircuitOpenError(
+                    self._node_id, circuit_state, retry_in=retry_in
+                )
+            if circuit_state.state == "half_open":
+                # In HALF_OPEN, check if we're within probe limits
+                if circuit_state.half_open_calls >= circuit_state.half_open_max_calls:
+                    logger.warning(
+                        "Worker %r circuit HALF_OPEN at probe limit (%d/%d)",
+                        self._node_id,
+                        circuit_state.half_open_calls,
+                        circuit_state.half_open_max_calls,
+                    )
+                    raise WorkerCircuitOpenError(
+                        self._node_id,
+                        circuit_state,
+                        retry_in=0.0,  # Try again immediately after one completes
+                    )
+
         asyncio.create_task(
             self._dispatch(task_id, agent_name, payload, handle),
             name=f"remote-{self._node_id}-{task_id[:8]}",
@@ -900,6 +1067,7 @@ __all__ = [
     "NodeHealth",
     "NodeOverloadError",
     "NoHealthyNodesError",
+    "WorkerCircuitOpenError",
     "NodeRegistry",
     "TaskHandle",
     "TaskResult",

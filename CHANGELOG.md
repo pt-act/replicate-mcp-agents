@@ -5,7 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2026-04-27
+## [Unreleased] — 2026-04-29
+
+### Added (Phase 6 · Production Hardening)
+
+**Comprehensive Ecosystem Documentation**
+- Documented 13+ major projects across multi-agent systems, blockchain protocols, gaming, and AI consciousness research
+- Updated R.A. Resume (v2.7) with technical deep-dives: CredDAO (13K+ LoC), SolarPlex Arbitrum-MCP (37 tools), 88.pi (169K+ LoC), QuantumReef (25K+ LoC), Aura Symphony (24K+ LoC), FundaQuant H-INNOVA (7-domain universal platform), and 7 additional production systems
+- All projects cross-referenced with Orion-OS architecture patterns, MCP protocol implementations, and consciousness-aware design principles
+- Note: These represent selected highlights from the broader ecosystem — not an exhaustive catalog
+
+**Cache Eviction Policy (v0.8.0 Feature #25)**
+- New `EvictionPolicy` enum — `LRU` (default), `TTL`, `FIFO`, `LFU` (reserved).
+- `LRU` — Least Recently Used: evicts entries accessed longest ago.
+- `TTL` — Time-To-Live only: only evicts expired entries, allows cache to grow
+  beyond capacity if no entries are expired.
+- `FIFO` — First In, First Out: evicts by insertion time, ignores access patterns.
+- `LFU` — Least Frequently Used: reserved for future implementation.
+- Extended `ResultCache` with configurable eviction policy via `policy` parameter.
+- Added background eviction thread support:
+  - `background_eviction: bool` — enable periodic cleanup of expired entries.
+  - `background_interval_s: float` — seconds between cleanup runs (default: 60s).
+  - `stop_background_eviction()` — clean shutdown of background thread.
+- Extended `_CacheEntry` with tracking fields:
+  - `inserted_at` — timestamp for FIFO ordering.
+  - `access_count` — counter for LFU policy (future use).
+  - `last_accessed` — timestamp for LRU ordering.
+- Added thread-safety via `threading.Lock` for all cache operations.
+- New `stats` property on `ResultCache` — returns complete cache statistics dict.
+- New `evictions` property — tracks total eviction count.
+- Exported from top-level: `from replicate_mcp import EvictionPolicy`.
+- Full test coverage: 30 unit tests (7 background tests excluded to avoid CI timeouts).
+- **Rationale:** Different workloads have different cache access patterns. LRU is
+  optimal for temporal locality, FIFO for streaming workloads where newer entries
+  are always more valuable, and TTL for workloads where freshness is the only
+  eviction criterion. Thread-safety enables safe concurrent access in multi-worker
+  deployments. Background eviction prevents memory leaks from expired entries
+  without blocking foreground operations.
+
+**Model Version Pinning (v0.8.0 Feature #18)**
+- See ADR-011: `docs/adr/011-version-pinning.md` for full architecture details.
+- New `VersionPinningMode` enum — `LATEST` (default), `EXACT`, `MINOR` (reserved).
+- Extended `DiscoveryConfig` with:
+  - `version_pinning: VersionPinningMode` — controls update behavior during refresh.
+  - `pinned_versions: dict[str, str]` — map of `"owner/name"` → `"version_hash"`.
+- `ModelDiscovery.refresh()` now respects pinned versions:
+  - In `EXACT` mode, already-registered pinned models are skipped during updates.
+  - New pinned models are registered with the pinned version hash appended: `"owner/name:hash"`.
+  - Pinned models receive `"pinned"`, `"exact-pin"` tags for visibility.
+- Helper functions for version handling:
+  - `_parse_pinned_version()` — extract hash from pinned string.
+  - `_strip_version()` — remove hash from pinned string.
+  - `_is_version_pinned()` — check if model should be treated as pinned.
+- `DiscoveryResult` tracks skipped pinned models in `skipped` count.
+- Exported from top-level: `from replicate_mcp import VersionPinningMode`.
+- Full test coverage: 27 unit tests, all passing.
+- **Rationale:** Production deployments require reproducible inference. Without version
+  pinning, model updates on Replicate can silently change agent behavior, breaking
+  compliance requirements and causing non-deterministic outputs. Version pinning
+  enables deterministic deployments with controlled, explicit updates.
+
+**Worker Circuit Breakers (v0.8.0 Feature #9)**
+- New `worker_circuit_breaker.py` — `WorkerCircuitBreaker` extends `CircuitBreaker` for distributed worker reliability tracking.
+  - `WorkerCircuitState` — serializable circuit state for health endpoints.
+  - Tracks `last_failure_at` timestamp for coordinator retry-in calculations.
+  - `WorkerCircuitOpenError` — worker-specific exception with URL, circuit state, and retry-in.
+- Extended `WorkerHttpApp` (`worker_server.py`) with optional circuit breaker integration:
+  - `/health` endpoint exposes circuit state (503 when OPEN).
+  - `/metrics` endpoint includes circuit metrics.
+  - `/execute` endpoint checks circuit before accepting and records success/failure.
+  - `serve_worker()` adds `enable_circuit_breaker` and `circuit_config` parameters.
+- Extended `HttpWorkerTransport` (`distributed.py`) with `get_circuit_state()` method.
+- Extended `RemoteWorkerNode` (`distributed.py`) with circuit breaker awareness:
+  - `check_circuit_state()` fetches and caches circuit state from worker.
+  - `is_circuit_open()` / `is_circuit_half_open()` helpers for routing decisions.
+  - `submit()` checks circuit before dispatch; raises `WorkerCircuitOpenError` if OPEN.
+- Extended `DistributedExecutor` with circuit-aware routing:
+  - `_least_loaded_all()` filters out workers with OPEN circuits.
+  - HALF_OPEN workers get 50% load penalty to reduce selection probability.
+- Added `WorkerCircuitOpenError` to distributed exceptions.
+- Full test coverage: 14 unit tests + 17 integration tests, all passing.
+- **Rationale:** Distributed workers can fail independently. Without circuit breaker
+  awareness, coordinators continue routing to unhealthy workers, causing cascading
+  failures. Worker circuit breakers enable automatic failover, gradual recovery,
+  and observability for production multi-node deployments.
 
 ### Fixed (Technical Debt Remediation)
 
@@ -41,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - Updated `test_sdk.py` to use `reset_workflow_registry()` for test isolation.
-- All 1085 unit tests pass; no breaking changes.
+- Added `test_version_pinning.py` — 27 unit tests covering version pinning functionality.
+- Added `test_cache_eviction_policy.py` — 30 unit tests covering eviction policies.
+- All 1150 unit tests pass; no breaking changes.
 
 ---
 
