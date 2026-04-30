@@ -731,7 +731,7 @@ registry.load(LatitudePlugin())  # Zero config — uses env vars
 ```
 
 **Features:**
-- **v2 API** (project slug) + **v1 legacy** (numeric ID) auto-detection
+- **Project slug format** (current) + **numeric ID** (legacy) — both work with API v3
 - **Prompt caching** with configurable TTL
 - **Graceful degradation** — continues working if Latitude unavailable
 - **OTEL bridge** — unified telemetry across Latitude + OpenTelemetry

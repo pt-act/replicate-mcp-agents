@@ -56,19 +56,19 @@ Zero configuration beyond environment variables (set in your shell):
 ```bash
 # Get API credentials from your Latitude dashboard
 
-# v2 (current): Uses project slug (e.g., "replicate-mcp-agents")
+# Current format: Project slug (preferred)
 LATITUDE_API_KEY="<your-api-key>"
 LATITUDE_PROJECT_SLUG="<your-project-slug>"
 export LATITUDE_API_KEY LATITUDE_PROJECT_SLUG
 
-# v1 (legacy): Uses numeric project ID
+# Legacy format: Numeric project ID (also supported)
 # LATITUDE_PROJECT_ID="12345"
 ```
 
-**API Version Support**: The client auto-detects v1 vs v2 based on which project identifier is configured.
-- v2: `LATITUDE_PROJECT_SLUG` (e.g., `replicate-mcp-agents`)
-- v1: `LATITUDE_PROJECT_ID` (numeric)
-- If both set, `project_slug` takes precedence (v2).
+**Project Identifier Formats**: Both work with API v3. The client auto-detects based on env vars.
+- Current: `LATITUDE_PROJECT_SLUG` (e.g., `replicate-mcp-agents`) — preferred
+- Legacy: `LATITUDE_PROJECT_ID` (numeric) — also supported
+- If both set, `project_slug` takes precedence.
 
 ### 3. OTEL Bridge (`LatitudeObservabilityBridge`)
 
