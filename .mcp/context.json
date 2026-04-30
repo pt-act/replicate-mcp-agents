@@ -1,0 +1,41 @@
+{
+  "projectType": "python",
+  "language": "python",
+  "frameworks": [],
+  "rootDir": "/Users/rna/Desktop/replicate-mcp-agents-Master",
+  "tsconfig": {},
+  "eslintConfig": {},
+  "dependencies": {
+    "replicate": ">=2.0.0b1,<3.0.0",
+    "mcp": ">=1.20.0,<2.0.0",
+    "click": ">=8.1.7,<9.0.0",
+    "pydantic": ">=2.9.0,<3.0.0",
+    "anyio": ">=4.6.0,<5.0.0",
+    "httpx": ">=0.27.0,<0.28.0",
+    "pyyaml": ">=6.0.2,<7.0.0",
+    "rich": ">=13.9.0,<14.0.0",
+    "structlog": ">=24.0.0,<26.0.0"
+  },
+  "devDependencies": {
+    "pytest": "^8.3.0",
+    "pytest-asyncio": "^0.24.0",
+    "pytest-cov": "^6.0.0",
+    "mypy": "^1.13.0",
+    "ruff": "^0.7.0",
+    "pre-commit": "^4.0.0"
+  },
+  "pathAliases": {},
+  "entryPoints": [
+    "src/replicate_mcp/__init__.py",
+    "src/replicate_mcp/server.py",
+    "src/replicate_mcp/cli/main.py"
+  ],
+  "validationRules": {
+    "strictMode": true,
+    "jsx": false,
+    "target": "ES2020"
+  },
+  "generatedAt": "2026-04-30T10:02:30.998118",
+  "generator": "@validator-fixer/mcp-context-generator",
+  "version": "1.0.0"
+}
