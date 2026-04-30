@@ -1,0 +1,437 @@
+{
+  "audit_info": {
+    "project": "replicate-mcp-agents",
+    "date": "2026-04-30T10:07:01.139417",
+    "validator": "Validator/Fixer Framework V3 with Context-Aware Validation",
+    "context_aware": true
+  },
+  "project_context": {
+    "type": "python",
+    "language": "python",
+    "dependencies": 9,
+    "entry_points": [
+      "src/replicate_mcp/__init__.py",
+      "src/replicate_mcp/server.py",
+      "src/replicate_mcp/cli/main.py"
+    ]
+  },
+  "summary": {
+    "total_files": 40,
+    "valid_files": 36,
+    "invalid_files": 4,
+    "total_errors": 11,
+    "total_warnings": 0,
+    "overall_valid": false
+  },
+  "files": {
+    "src/replicate_mcp/interfaces.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/dsl.py": {
+      "valid": false,
+      "confidence": 0.95,
+      "errors": [
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 3,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 320,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 358,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 371,
+          "severity": "error"
+        }
+      ],
+      "warnings": []
+    },
+    "src/replicate_mcp/server.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/sdk.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/qos.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/discovery.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/latitude.py": {
+      "valid": false,
+      "confidence": 0.95,
+      "errors": [
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 867,
+          "severity": "error"
+        }
+      ],
+      "warnings": []
+    },
+    "src/replicate_mcp/security.py": {
+      "valid": false,
+      "confidence": 0.95,
+      "errors": [
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 243,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "exec() call",
+          "line": 243,
+          "severity": "error"
+        }
+      ],
+      "warnings": []
+    },
+    "src/replicate_mcp/cache.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/observability.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/ratelimit.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/distributed.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/routing.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/worker_circuit_breaker.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/worker_server.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/exceptions.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/resilience.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/validation.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/plugins/registry.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/plugins/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/plugins/loader.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/plugins/builtin.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/plugins/base.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/agents/transforms.py": {
+      "valid": false,
+      "confidence": 0.95,
+      "errors": [
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 4,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 7,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "eval() call",
+          "line": 25,
+          "severity": "error"
+        },
+        {
+          "code": "COMMAND_INJECTION",
+          "message": "exec() call",
+          "line": 7,
+          "severity": "error"
+        }
+      ],
+      "warnings": []
+    },
+    "src/replicate_mcp/agents/execution.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/agents/registry.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/agents/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/agents/composition.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/logging.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/audit.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/telemetry.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/router_state.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/utils/checkpointing.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/mcp/transport.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/mcp/protocol.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/mcp/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/cli/__init__.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    },
+    "src/replicate_mcp/cli/main.py": {
+      "valid": true,
+      "confidence": 1.0,
+      "errors": [],
+      "warnings": []
+    }
+  },
+  "security_issues": [
+    {
+      "file": "src/replicate_mcp/dsl.py",
+      "line": 3,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/dsl.py",
+      "line": 320,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/dsl.py",
+      "line": 358,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/dsl.py",
+      "line": 371,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/latitude.py",
+      "line": 867,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/security.py",
+      "line": 243,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/security.py",
+      "line": 243,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "exec() call"
+    },
+    {
+      "file": "src/replicate_mcp/agents/transforms.py",
+      "line": 4,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/agents/transforms.py",
+      "line": 7,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/agents/transforms.py",
+      "line": 25,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "eval() call"
+    },
+    {
+      "file": "src/replicate_mcp/agents/transforms.py",
+      "line": 7,
+      "severity": "error",
+      "code": "COMMAND_INJECTION",
+      "message": "exec() call"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "HIGH",
+      "category": "Security",
+      "issue": "Found 11 security vulnerabilities",
+      "recommendation": "Review and fix all eval()/exec() usage. Consider using ast.literal_eval() for safe evaluation."
+    },
+    {
+      "priority": "MEDIUM",
+      "category": "Code Quality",
+      "issue": "4 files have validation errors",
+      "recommendation": "Add missing type hints and fix syntax errors."
+    },
+    {
+      "priority": "LOW",
+      "category": "Best Practices",
+      "issue": "Consider enabling strict type checking",
+      "recommendation": "Set strict: true in types validator configuration for better type safety."
+    }
+  ]
+}
