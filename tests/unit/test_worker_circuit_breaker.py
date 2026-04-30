@@ -4,7 +4,8 @@ Sprint S17 — Worker Circuit Breakers (v0.8.0)
 """
 
 import pytest
-from replicate_mcp.resilience import CircuitBreakerConfig, CircuitState
+
+from replicate_mcp.resilience import CircuitBreakerConfig
 from replicate_mcp.worker_circuit_breaker import (
     WorkerCircuitBreaker,
     WorkerCircuitOpenError,
@@ -88,8 +89,8 @@ class TestWorkerCircuitBreaker:
             try:
                 breaker.pre_call()
                 breaker.record_failure()
-            except Exception:
-                pass  # Circuit may open
+            except Exception:  # noqa: S110
+                pass  # Circuit may open, expected behavior
 
         # Now should have failure timestamp
         state2 = breaker.get_state()

@@ -4,7 +4,6 @@ Tests for configurable eviction policies in ResultCache.
 """
 
 import pytest
-from unittest.mock import patch
 
 from replicate_mcp.cache import EvictionPolicy, ResultCache, _CacheEntry
 

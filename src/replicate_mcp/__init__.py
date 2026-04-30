@@ -53,7 +53,12 @@ Phase 7 public surface (optional extras):
 """
 
 from replicate_mcp.cache import EvictionPolicy, ResultCache
-from replicate_mcp.discovery import DiscoveryConfig, ModelDiscovery, VersionPinningMode, discover_and_register
+from replicate_mcp.discovery import (
+    DiscoveryConfig,
+    ModelDiscovery,
+    VersionPinningMode,
+    discover_and_register,
+)
 from replicate_mcp.distributed import (
     DistributedExecutor,
     HttpWorkerTransport,
@@ -81,7 +86,6 @@ from replicate_mcp.plugins import (
 from replicate_mcp.qos import AdaptiveRouter, QoSLevel, QoSPolicy, UCB1Router
 from replicate_mcp.resilience import is_retryable_error
 from replicate_mcp.routing import CostAwareRouter, ModelStats, RoutingDecision, RoutingWeights
-from replicate_mcp.worker_circuit_breaker import WorkerCircuitBreaker, WorkerCircuitState
 from replicate_mcp.sdk import (
     AgentBuilder,
     AgentContext,
@@ -94,6 +98,7 @@ from replicate_mcp.sdk import (
 )
 from replicate_mcp.utils.audit import AuditLogger, AuditRecord
 from replicate_mcp.utils.router_state import RouterStateManager
+from replicate_mcp.worker_circuit_breaker import WorkerCircuitBreaker, WorkerCircuitState
 from replicate_mcp.worker_server import WorkerHttpApp, serve_worker
 
 # Latitude integration (optional extra)
