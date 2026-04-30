@@ -9,7 +9,6 @@ These tests verify that:
 4. HALF_OPEN workers get reduced selection probability
 """
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -22,7 +21,7 @@ from replicate_mcp.distributed import (
     WorkerCircuitOpenError,
 )
 from replicate_mcp.resilience import CircuitBreakerConfig
-from replicate_mcp.worker_circuit_breaker import WorkerCircuitBreaker, WorkerCircuitState
+from replicate_mcp.worker_circuit_breaker import WorkerCircuitState
 from replicate_mcp.worker_server import WorkerHttpApp
 
 
@@ -108,8 +107,8 @@ class TestWorkerHttpAppCircuitBreaker:
                 try:
                     app._circuit_breaker.pre_call()
                     app._circuit_breaker.record_failure()
-                except Exception:
-                    pass
+                except Exception:  # noqa: S110
+                    pass  # Circuit opening is expected
 
         # Circuit should now be open
         state = app.circuit_state

@@ -29,7 +29,6 @@ from typing import Any
 from replicate_mcp.resilience import (
     CircuitBreaker,
     CircuitBreakerConfig,
-    CircuitState,
     CircuitOpenError,
 )
 

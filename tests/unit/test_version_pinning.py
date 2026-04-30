@@ -4,8 +4,9 @@ Version pinning prevents models from being updated during discovery refresh,
 enabling reproducibility and stability in production deployments.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from replicate_mcp.agents.registry import AgentMetadata, AgentRegistry
 from replicate_mcp.discovery import (
@@ -19,7 +20,6 @@ from replicate_mcp.discovery import (
     _strip_version,
     discover_and_register,
 )
-
 
 # -----------------------------------------------------------------------------
 # Helper functions
@@ -246,7 +246,7 @@ class TestModelDiscoveryRefreshPinning:
         mock_replicate.Client.return_value = mock_client
 
         with patch.dict('sys.modules', {'replicate': mock_replicate}):
-            result = await discovery.refresh(api_token="test")
+            result = await discovery.refresh(api_token="test")  # noqa: S106
 
         # Model was discovered but not updated (skipped)
         assert result.discovered == 1
@@ -284,7 +284,7 @@ class TestModelDiscoveryRefreshPinning:
         mock_replicate.Client.return_value = mock_client
 
         with patch.dict('sys.modules', {'replicate': mock_replicate}):
-            result = await discovery.refresh(api_token="test")
+            result = await discovery.refresh(api_token="test")  # noqa: S106
 
         # Unpinned model was updated
         assert result.discovered == 1
@@ -309,7 +309,7 @@ class TestModelDiscoveryRefreshPinning:
         mock_replicate.Client.return_value = mock_client
 
         with patch.dict('sys.modules', {'replicate': mock_replicate}):
-            result = await discovery.refresh(api_token="test")
+            result = await discovery.refresh(api_token="test")  # noqa: S106
 
         # New pinned model was registered
         assert result.discovered == 1
@@ -347,7 +347,7 @@ class TestModelDiscoveryRefreshPinning:
         mock_replicate.Client.return_value = mock_client
 
         with patch.dict('sys.modules', {'replicate': mock_replicate}):
-            result = await discovery.refresh(api_token="test")
+            result = await discovery.refresh(api_token="test")  # noqa: S106
 
         # Model was updated (not pinned in LATEST mode)
         assert result.updated == 1
@@ -377,7 +377,7 @@ class TestDiscoverAndRegister:
                 pinned_versions={"meta/llama": "abc123"},
             )
             registry, result = await discover_and_register(
-                api_token="test",
+                api_token="test",  # noqa: S106
                 config=config,
             )
 
