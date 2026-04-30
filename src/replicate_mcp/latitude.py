@@ -97,12 +97,16 @@ from replicate_mcp.exceptions import ReplicateMCPError
 class LatitudeConfig:
     """Configuration for Latitude integration.
 
-    Supports both v1 (project_id) and v2 (project_slug) APIs.
+    Supports both project identifier formats for API v3:
+        - Legacy: numeric project_id (e.g., 32129)
+        - Current: project_slug (e.g., "replicate-mcp-agents")
+
+    The API version is always v3. The identifier format is auto-detected.
 
     Attributes:
         api_key:        Latitude API key. Falls back to LATITUDE_API_KEY env var.
-        project_id:     Default project ID (v1). Falls back to LATITUDE_PROJECT_ID env var.
-        project_slug:   Default project slug (v2). Falls back to LATITUDE_PROJECT_SLUG env var.
+        project_id:     Legacy numeric project ID. Falls back to LATITUDE_PROJECT_ID env var.
+        project_slug:   Current project slug. Falls back to LATITUDE_PROJECT_SLUG env var.
         base_url:       API base URL. Default: https://gateway.latitude.so/api/v3
         timeout_s:      Request timeout in seconds.
         enable_tracing:     Emit traces for agent executions.
@@ -134,12 +138,10 @@ class LatitudeConfig:
         return bool(self.api_key and (self.project_id or self.project_slug))
 
     def get_project_id(self, override: str | None = None) -> str:
-        """Get the project identifier to use for API calls.
+        """Get the project identifier to use for API v3 calls.
 
-        v2 uses project_slug (e.g., 'replicate-mcp-agents').
-        v1 uses project_id (numeric or string).
-
-        Prefers slug if available (v2), falls back to id (v1).
+        Prefer project_slug (current format), fall back to project_id (legacy).
+        Both work with the same v3 API — this is just the identifier format.
 
         Args:
             override: Optional override value.
@@ -157,8 +159,8 @@ class LatitudeConfig:
         if self.project_id:
             return self.project_id
         raise LatitudeNotConfiguredError(
-            "No project identifier configured. Set LATITUDE_PROJECT_SLUG (v2) "
-            "or LATITUDE_PROJECT_ID (v1) environment variable."
+            "No project identifier configured. Set LATITUDE_PROJECT_SLUG (preferred) "
+            "or LATITUDE_PROJECT_ID (legacy) environment variable."
         )
 
 

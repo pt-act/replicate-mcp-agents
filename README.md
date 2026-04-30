@@ -2,10 +2,10 @@
 
 > **MCP-native agent orchestration for Replicate AI models — production-grade, observable, and extensible.**
 
-[![Tests](https://img.shields.io/badge/tests-764%20passed-brightgreen)](#test-suite)
+[![Tests](https://img.shields.io/badge/tests-1150%20passed-brightgreen)](#test-suite)
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#test-suite)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Mypy](https://img.shields.io/badge/mypy-strict-green)](pyproject.toml)
 [![Ruff](https://img.shields.io/badge/lint-ruff-green)](pyproject.toml)
@@ -28,7 +28,7 @@
 
 ---
 
-## Current Status — v0.6.0
+## Current Status — v0.8.0
 
 **Phase 5 complete.** The framework now provides a full production-grade orchestration layer:
 
@@ -36,16 +36,19 @@
 |------------|--------|-------|
 | Circuit breaker (CLOSED→OPEN→HALF_OPEN) | ✅ Stable | Per-model failure isolation with recovery probes |
 | Retry with decorrelated jitter | ✅ Stable | AWS-style jitter prevents thundering herd |
-| Cost-aware routing (Thompson Sampling) | ✅ Stable | Beta posterior over success rate, EMA for cost/latency |
+| Cost-aware routing (Thompson Sampling) | ✅ Stable | Multi-objective Gaussian Thompson on scalarized utility |
 | QoS pre-filtering (UCB1 bandit) | ✅ Stable | Tier enforcement (FAST < 2 000 ms) |
 | Plugin lifecycle hooks | ✅ Stable | 7 extension points, 3 built-in guardrails |
 | Distributed execution | ✅ Stable | Local + HTTP worker nodes with health checks |
+| Worker Circuit Breakers (v0.8.0) | ✅ Stable | Worker-level failure tracking with coordinator failover |
 | MCP server (stdio / SSE / Streamable HTTP) | ✅ Stable | Claude Desktop, Cursor, custom clients |
-| Result caching | ✅ Stable | TTL-based with automatic invalidation |
+| Result caching with eviction policies (v0.8.0) | ✅ Stable | LRU/TTL/FIFO with thread-safe background eviction |
+| Model Version Pinning (v0.8.0) | ✅ Stable | Deterministic inference with LATEST/EXACT/MINOR modes |
 | Audit logging | ✅ Stable | Structured invocation records |
 | Router state persistence | ✅ Stable | JSON dump/load with round-trip safety |
 | CLI workflow execution | ✅ Stable | YAML-defined DAGs with parallel fan-out |
 | Observability (OTEL) | ✅ Stable | Spans + metrics, null-safe when SDK absent |
+| Latitude Integration (v0.8.0) | ✅ Stable | Prompt management, tracing, evaluations (optional) |
 
 ### Test Suite
 
@@ -53,14 +56,16 @@
 # Run the test suite
 poetry run pytest --cov-fail-under=90
 
-# Type-check all 33 source files
+# Type-check all 37 source files
 poetry run mypy src/
 
 # Lint
 poetry run ruff check .
 ```
 
-**Current metrics:** 764 tests, ~90 % line coverage, mypy strict mode clean, ruff clean.
+**Current metrics:** 1150 tests, ~90 % line coverage, mypy strict mode clean, ruff clean.
+
+**Security audit:** v0.8.0 includes comprehensive security review — all findings verified as false positives (see `docs/AUDIT/`).
 
 ---
 
@@ -417,7 +422,7 @@ src/replicate_mcp/
 │   └── validation.py        # Pydantic schemas
 
 tests/
-├── unit/                    # 764+ unit tests
+├── unit/                    # 1100+ unit tests
 ├── integration/             # End-to-end tests
 │   └── test_distributed.py  # Multi-worker scenarios
 └── load/
@@ -682,6 +687,55 @@ analysis_wf = (
 )
 ```
 
+### Latitude Integration — Prompt Management & Tracing (v0.8.0)
+
+```bash
+# Install with Latitude support
+pip install "replicate-mcp-agents[latitude]"
+
+# Configure environment
+export LATITUDE_API_KEY="lat_..."
+export LATITUDE_PROJECT_SLUG="replicate-mcp-agents"  # v2 API
+```
+
+```python
+from replicate_mcp import LatitudeClient, LatitudeConfig
+from replicate_mcp import LatitudePlugin, PluginRegistry
+
+# Direct client usage — fetch and run prompts from Latitude
+async with LatitudeClient() as client:
+    # Fetch prompt from live/production version
+    prompt = await client.get_prompt("system/greeting", version_uuid="live")
+    
+    # Execute via Latitude API
+    result = await client.run_prompt(
+        "system/greeting",
+        parameters={"name": "World"},
+        stream=False,
+    )
+    
+    # Continue multi-turn conversation
+    chat = await client.chat(
+        result["uuid"],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "Tell me more"}]}]
+    )
+    
+    # Version management
+    draft = await client.create_version("draft-v2")
+    await client.publish_version(draft["uuid"], title="v2.0", description="Improved prompts")
+
+# Automatic tracing — all agent runs traced to Latitude
+registry = PluginRegistry()
+registry.load(LatitudePlugin())  # Zero config — uses env vars
+# Every agent execution now generates a trace in Latitude
+```
+
+**Features:**
+- **Project slug format** (current) + **numeric ID** (legacy) — both work with API v3
+- **Prompt caching** with configurable TTL
+- **Graceful degradation** — continues working if Latitude unavailable
+- **OTEL bridge** — unified telemetry across Latitude + OpenTelemetry
+
 ---
 
 ## Key Design Decisions
@@ -704,9 +758,8 @@ analysis_wf = (
 
 | Phase | Target | Features | Status |
 |-------|--------|----------|--------|
-| v0.7.0 | Q2 2026 | Technical debt (state property, encapsulation, ModelCatalogue removal) | ✅ Complete |
-| v0.8.0 | Q2 2026 | Multi-objective routing (Pareto frontier) | 🔄 In Progress |
-| v0.9.0 | Q3 2026 | Persistent router state (Redis/SQLite backend) | ⏳ Not Started |
+| v0.8.0 | Q2 2026 | Worker Circuit Breakers, Model Version Pinning, Cache Eviction, Latitude Integration | ✅ Complete |
+| v0.9.0 | Q3 2026 | MINOR pinning, LFU eviction, workflow versioning | ⏳ Not Started |
 | v1.0.0 | Q3 2026 | Stable API, plugin marketplace, managed worker cloud | ⏳ Not Started |
 
 ---
