@@ -5,16 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2026-04-29
-
-### Added (Phase 6 · Production Hardening)
-
-**Comprehensive Ecosystem Documentation**
-- Documented 13+ major projects across multi-agent systems, blockchain protocols, gaming, and AI consciousness research
-- Updated R.A. Resume (v2.7) with technical deep-dives: CredDAO (13K+ LoC), SolarPlex Arbitrum-MCP (37 tools), 88.pi (169K+ LoC), QuantumReef (25K+ LoC), Aura Symphony (24K+ LoC), FundaQuant H-INNOVA (7-domain universal platform), and 7 additional production systems
-- All projects cross-referenced with Orion-OS architecture patterns, MCP protocol implementations, and consciousness-aware design principles
-- Note: These represent selected highlights from the broader ecosystem — not an exhaustive catalog
-
 **Cache Eviction Policy (v0.8.0 Feature #25)**
 - New `EvictionPolicy` enum — `LRU` (default), `TTL`, `FIFO`, `LFU` (reserved).
 - `LRU` — Least Recently Used: evicts entries accessed longest ago.
