@@ -29,6 +29,12 @@ Phase 5a public surface:
     - ``AgentExecutor`` now accepts ``plugin_registry``, ``audit_logger``, ``cache``.
 
 Phase 6 public surface:
+    - :mod:`~replicate_mcp.worker_circuit_breaker` — ``WorkerCircuitBreaker``,
+      ``WorkerCircuitState`` for distributed worker reliability tracking (v0.8.0).
+    - :mod:`~replicate_mcp.distributed` — ``WorkerCircuitOpenError`` for circuit
+      breaker-aware routing (v0.8.0).
+
+Phase 6 public surface:
     - :mod:`~replicate_mcp.exceptions` — ``RetryableError``, ``NonRetryableError``,
       ``AuthenticationError``, ``RateLimitError``, ``ServerError``, ``ClientError``
       for error classification in retry logic.
@@ -46,12 +52,13 @@ Phase 7 public surface (optional extras):
       tracing, evaluations, and datasets. Install with ``pip install "replicate-mcp-agents[latitude]"``.
 """
 
-from replicate_mcp.cache import ResultCache
-from replicate_mcp.discovery import DiscoveryConfig, ModelDiscovery, discover_and_register
+from replicate_mcp.cache import EvictionPolicy, ResultCache
+from replicate_mcp.discovery import DiscoveryConfig, ModelDiscovery, VersionPinningMode, discover_and_register
 from replicate_mcp.distributed import (
     DistributedExecutor,
     HttpWorkerTransport,
     RemoteWorkerNode,
+    WorkerCircuitOpenError,
     WorkerNode,
     WorkerTransport,
 )
@@ -74,6 +81,7 @@ from replicate_mcp.plugins import (
 from replicate_mcp.qos import AdaptiveRouter, QoSLevel, QoSPolicy, UCB1Router
 from replicate_mcp.resilience import is_retryable_error
 from replicate_mcp.routing import CostAwareRouter, ModelStats, RoutingDecision, RoutingWeights
+from replicate_mcp.worker_circuit_breaker import WorkerCircuitBreaker, WorkerCircuitState
 from replicate_mcp.sdk import (
     AgentBuilder,
     AgentContext,
@@ -111,6 +119,7 @@ __all__ = [
     # discovery
     "DiscoveryConfig",
     "ModelDiscovery",
+    "VersionPinningMode",
     "discover_and_register",
     # sdk
     "agent",
@@ -140,6 +149,10 @@ __all__ = [
     "WorkerTransport",
     "HttpWorkerTransport",
     "RemoteWorkerNode",
+    "WorkerCircuitOpenError",
+    # Phase 8 — worker circuit breaker (v0.8.0)
+    "WorkerCircuitBreaker",
+    "WorkerCircuitState",
     # worker server
     "WorkerHttpApp",
     "serve_worker",
@@ -150,6 +163,7 @@ __all__ = [
     "AuditRecord",
     # Phase 5a — result cache
     "ResultCache",
+    "EvictionPolicy",
     # Phase 6 — routing decision explanation
     "CostAwareRouter",
     "ModelStats",
