@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**Transitive Dependency Security Posture & CVE Remediation**
+- See ADR-013: `docs/adr/013-transitive-security-posture.md` for the full architecture and rationale.
+- Remediates 22 known vulnerabilities across 6 packages surfaced by the `pip-audit`
+  Security CI job when the advisory feed updated mid-release-cycle.
+- **Direct dependency bumps (honest scope — we import these):**
+  - `mcp` `>=1.20.0` → `>=1.28.1` (CVE-2026-52869, CVE-2026-59950).
+  - `click` `>=8.1.7` → `>=8.3.3` (PYSEC-2026-2132, command injection in `click.edit()`).
+  - `starlette` promoted into the `http` extra at `>=1.3.1` — it is a **genuine direct
+    dependency** (imported in `worker_server.py`), not merely transitive via
+    `mcp → sse-starlette`. Declaring it fixes a latent reliance on a transitive
+    and enforces the patched floor for the HTTP transport.
+- **New `[secure]` extra** — opt-in enforced floors for known-vulnerable
+  **transitive** deps that this project does NOT import directly:
+  `python-multipart>=0.0.31` (PYSEC-2026-3036/3037/3039/3040),
+  `pyjwt>=2.13.0` (PYSEC-2026-175/176/177/178/179),
+  `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf),
+  `idna>=3.15` (PYSEC-2026-215),
+  `pygments>=2.20.0` (CVE-2026-4539),
+  `python-dotenv>=1.2.2` (CVE-2026-28684).
+  Consumers opt in with `pip install "replicate-mcp-agents[secure]"`.
+- **Lock-resolution side effect:** because Poetry resolves all extras at lock time,
+  the `secure` and `http` floors also keep `poetry.lock` — and the lockfile-based
+  CI `pip-audit` job — clean. This replaces the previous stale
+  `[tool.poetry.group.dev.dependencies]` "force patched versions" block, which is
+  removed (its floors were outdated and it only influenced the lock, not the wheel).
+- **New `wheel-audit` CI job** (`security.yml`) — glass-box counterpart to the
+  existing lockfile `pip-audit`: builds the published wheel, installs it into a
+  clean consumer venv resolving from PyPI (not the lockfile), and runs
+  `pip-audit`. **Non-blocking by design** (`continue-on-error: true`) — we disclose
+  what consumers get rather than enforce it, since the transitives are not our
+  direct deps. Serves as the early-warning system for the next upstream regression.
+- **Clarified the existing `pip-audit` job** as the blocking, lockfile-scoped check
+  (our declared dev/CI environment — we control the lock).
+- **Docs:** CONTRIBUTING.md `### Security` section extended with the posture;
+  README.md installation section points at `[http]` and `[secure]`.
+- **Honesty contract:** we pin and audit our direct deps; transitive security is
+  upstream's responsibility. The published wheel's `Requires-Dist` lists only true
+  direct deps — no transitive is misrepresented as core. Consumers who want
+  enforcement opt in via `[secure]`; everyone else manages their own constraints.
+- **Follow-up:** when upstream `mcp` raises its own floors, shrink the `secure`
+  extra and remove redundant entries (tracked in ADR-013).
+- **Rationale:** This project is security-positioned (dedicated security workflow,
+  audit evidence bundle) and ships as a published PyPI library. The pre-existing
+  posture was "clean lockfile, uncontrolled wheel" with no disclosure. Honesty
+  about the dependency graph (glass box, §00) outweighs paternalistic enforcement
+  of a transitive closure we do not own — so the design is: enforce direct deps,
+  disclose the posture, offer opt-in transitive enforcement, and detect (not
+  block) consumer-side regressions.
+
 **Cache Eviction Policy (v0.8.0 Feature #25)**
 - New `EvictionPolicy` enum — `LRU` (default), `TTL`, `FIFO`, `LFU` (reserved).
 - `LRU` — Least Recently Used: evicts entries accessed longest ago.

@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "replicate (>=2.0.0b1,<3.0.0)",
-    "mcp (>=1.20.0,<2.0.0)",
-    "click (>=8.1.7,<9.0.0)",
+    "mcp (>=1.28.1,<2.0.0)",
+    "click (>=8.3.3,<9.0.0)",
     "pydantic (>=2.9.0,<3.0.0)",
     "anyio (>=4.6.0,<5.0.0)",
     "httpx (>=0.27.0,<0.28.0)",
@@ -32,13 +32,34 @@ load = [
 ]
 # HTTP transport — install with: pip install "replicate-mcp-agents[http]"
 # Enables: serve_http(), serve_streamable_http(), serve_worker(), workers start
+# starlette is a DIRECT dependency of this feature (imported in worker_server),
+# not merely transitive via mcp/sse-starlette — declaring it here fixes a latent
+# reliance on a transitive and enforces the security floor.
 http = [
     "uvicorn>=0.29.0,<1.0.0",
+    "starlette>=1.3.1",
 ]
 # Latitude integration — install with: pip install "replicate-mcp-agents[latitude]"
 # Enables: Prompt management, tracing, evaluations via latitude.sh
 latitude = [
     "httpx>=0.27.0,<0.28.0",
+]
+# Security hardening — install with: pip install "replicate-mcp-agents[secure]"
+# Opt-in enforced floors for known-vulnerable TRANSITIVE deps (via mcp / httpx /
+# anyio / rich) that this project does NOT import directly. Declaring them as core
+# deps would misrepresent the dependency graph; instead we disclose the posture
+# and let consumers choose: [secure] for enforced floors, or your own `pip-audit`
+# / lockfile policy. (Side effect: Poetry resolves all extras at lock time, so
+# these floors also keep poetry.lock — and the lockfile-based CI pip-audit job —
+# clean. See the wheel-audit job in .github/workflows/security.yml for the
+# consumer-side counterpart.)
+secure = [
+    "python-multipart>=0.0.31",  # via mcp: PYSEC-2026-3036/3037/3039/3040
+    "pyjwt>=2.13.0",             # via mcp[crypto]: PYSEC-2026-175/176/177/178/179
+    "cryptography>=48.0.1",      # via pyjwt[crypto]: GHSA-537c-gmf6-5ccf
+    "idna>=3.15",                # via httpx/anyio: PYSEC-2026-215
+    "pygments>=2.20.0",          # via rich/pytest: CVE-2026-4539
+    "python-dotenv>=1.2.2",      # via mcp: CVE-2026-28684
 ]
 # Full dev extras — inlined to avoid self-referencing extras (Poetry compat)
 all = [
@@ -76,15 +97,10 @@ mypy = "^1.13.0"
 ruff = "^0.7.0"
 pre-commit = "^4.0.0"
 
-# ── Security: force patched versions of vulnerable transitive deps ──────────
-# CVE-2025-62727: starlette <0.49.1 (via mcp → sse-starlette)
-starlette = ">=0.49.1"
-# CVE-2026-24486 + CVE-2026-40347: python-multipart <0.0.26 (via mcp)
-python-multipart = ">=0.0.26"
-# CVE-2026-4539: pygments <2.20.0 (via rich + pytest)
-pygments = ">=2.20.0"
-# CVE-2026-28684: python-dotenv <1.2.2 (via mcp)
-python-dotenv = ">=1.2.2"
+# Note: security floors for transitive deps live in [project.optional-dependencies]
+# under the `secure` and `http` extras (see above), not here. That keeps the dev
+# group to genuine dev tools and avoids misrepresenting transitives as dev deps.
+# The extras influence lock resolution, so poetry.lock stays patched.
 
 # mcp is now a core dependency; no longer needed in a separate group
 
