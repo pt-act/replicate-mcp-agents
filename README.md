@@ -701,7 +701,7 @@ analysis_wf = (
 pip install "replicate-mcp-agents[latitude]"
 
 # Configure environment
-export LATITUDE_API_KEY="lat_..."
+export LATITUDE_API_KEY="lat_..."  # pragma: allowlist secret
 export LATITUDE_PROJECT_SLUG="replicate-mcp-agents"  # v2 API
 ```
 
