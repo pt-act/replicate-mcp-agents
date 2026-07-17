@@ -445,6 +445,13 @@ pip install replicate-mcp-agents
 
 # With all optional dependencies (OTEL, CLI enhancements)
 pip install "replicate-mcp-agents[full]"
+
+# HTTP worker transport (serve_worker / serve_http)
+pip install "replicate-mcp-agents[http]"
+
+# Enforce security floors on known-vulnerable transitive deps
+# (opt-in; see docs/adr/013-transitive-security-posture.md)
+pip install "replicate-mcp-agents[secure]"
 ```
 
 ---

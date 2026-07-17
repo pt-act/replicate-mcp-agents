@@ -49,6 +49,15 @@ All changes go through pull requests. Direct pushes to `main` are prohibited.
 - **No `eval()` or `exec()`** — use the `TransformRegistry` for dynamic behaviour
 - **No string-encoded lambdas** in YAML or config files
 - **Never log API tokens** — use the `REPLICATE_API_TOKEN` env var
+- **Dependency security posture:** we pin and audit our **direct** deps. Transitive
+  security is upstream's responsibility (e.g. `mcp`'s), not ours — we do not declare
+  transitive packages as core deps (that would misrepresent the graph). Two CI
+  mechanisms back this: a blocking lockfile `pip-audit` (our env) and a
+  **non-blocking** `wheel-audit` (what a `pip install` consumer gets). Consumers
+  who want enforced floors on known-vulnerable transitives can opt in with
+  `pip install "replicate-mcp-agents[secure]"`. See
+  `docs/adr/013-transitive-security-posture.md` for the full rationale and the
+  control boundary between the two audit jobs.
 
 ## Pull Request Process
 

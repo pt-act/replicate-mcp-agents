@@ -18,10 +18,13 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # pip-audit — known CVE check against all dependencies
+  # pip-audit — known CVE check against our declared dev/CI environment
+  # (the lockfile). We control this: the lock pins patched versions, so a
+  # failure here means OUR environment is vulnerable — blocking. Contrast
+  # wheel-audit below for the consumer-side (non-blocking) counterpart.
   # ---------------------------------------------------------------------------
   pip-audit:
-    name: pip-audit (dependency CVE scan)
+    name: pip-audit (lockfile / dev+CI env)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.2.2
@@ -39,6 +42,47 @@ jobs:
             -o /tmp/audit-requirements.txt
       - name: Run pip-audit
         run: pip-audit -r /tmp/audit-requirements.txt --desc
+
+  # ---------------------------------------------------------------------------
+  # wheel-audit — consumer-side CVE scan (glass box, NON-BLOCKING)
+  # ---------------------------------------------------------------------------
+  # Counterpart to the lockfile-based pip-audit job above. That job guarantees
+  # our declared dev/CI environment is clean (we control the lock). This job does
+  # NOT use the lockfile: it builds the published wheel and resolves its deps
+  # the way a plain `pip install replicate-mcp-agents` consumer would (latest
+  # from PyPI), then audits that closure.
+  #
+  # We do NOT enforce transitive security for consumers — those packages are
+  # not our direct deps (see the `secure` extra for opt-in enforcement). So
+  # this job is non-blocking: it surfaces the truth about what consumers get
+  # rather than guaranteeing it. A finding here is a decision point (add to
+  # `secure`, wait for upstream, or document) — not a release blocker.
+  wheel-audit:
+    name: pip-audit (published-wheel consumer install)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install Poetry + pip-audit
+        run: pip install poetry pip-audit poetry-plugin-export
+      - name: Build wheel
+        run: poetry build -f wheel
+      - name: Install wheel into clean consumer venv
+        run: |
+          python -m venv /tmp/consumer
+          /tmp/consumer/bin/pip install --upgrade pip
+          /tmp/consumer/bin/pip install ./dist/*.whl
+          /tmp/consumer/bin/pip install pip-audit
+      - name: Print resolved transitive versions (transparency)
+        run: |
+          /tmp/consumer/bin/pip list --format=freeze \
+            | grep -iE '^(click|cryptography|idna|pyjwt|python-multipart|starlette|pygments|python-dotenv)==' \
+            || true
+      - name: pip-audit consumer install
+        continue-on-error: true
+        run: /tmp/consumer/bin/pip-audit --desc
 
   # ---------------------------------------------------------------------------
   # SAST — Bandit static analysis for Python security issues
