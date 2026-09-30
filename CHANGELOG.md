@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**Security CI Remediation — PyJWT advisories (2026-09-30)**
+- The nightly `Security` workflow's blocking `pip-audit (lockfile / dev+CI env)` job
+  failed on `Master` (`6af9fa1`): 10 advisories against the locked `pyjwt 2.13.0`
+  — CVE-2026-102265, CVE-2026-102266, CVE-2026-102267, CVE-2026-102268,
+  CVE-2026-102269, CVE-2026-102271, CVE-2026-102272, CVE-2026-102273,
+  CVE-2026-102274, and CVE-2026-101917. All 10 are fixed in PyJWT 2.14.0.
+- Bumped the `secure` extra floor `pyjwt>=2.13.0` → `pyjwt>=2.14.0` (first release
+  containing the fixes). `poetry.lock` now resolves `pyjwt 2.15.1`.
+- Scope unchanged: `pyjwt` remains a **transitive** via `mcp[crypto]` that this
+  project does not import, so it is not declared as a core dep (ADR-013).
+- Verified: `poetry check --lock` passes; `pip-audit -r <exported lockfile>`
+  reports **no known vulnerabilities**.
+
 **Transitive Dependency Security Posture & CVE Remediation**
 - See ADR-013: `docs/adr/013-transitive-security-posture.md` for the full architecture and rationale.
 - Remediates 22 known vulnerabilities across 6 packages surfaced by the `pip-audit`

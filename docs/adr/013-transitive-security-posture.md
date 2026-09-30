@@ -110,3 +110,24 @@ This ADR is the canonical disclosure. The posture in one sentence: **we pin and 
 - **Upstream `mcp` floors.** File / track an item: when `mcp` publishes a release raising its own floors for `pyjwt`, `python-multipart`, `starlette`, etc., bump our `mcp` floor and remove the now-redundant entries from the `secure` extra. The `secure` extra should shrink over time, not grow.
 - **Review `wheel-audit` output on schedule.** The nightly cron already runs the Security workflow; treat any `wheel-audit` finding as a triage item in the next planning cycle.
 - **README mention.** Add a one-line pointer to `[secure]` in the README's installation section so consumers discover the opt-in without reading this ADR.
+
+## Amendment — 2026-09-30 · `pyjwt` floor bumped to 2.14.0
+
+The nightly `Security` workflow's **blocking** lockfile `pip-audit` job failed on
+`Master` (`6af9fa1`) with 10 advisories against the locked `pyjwt 2.13.0`:
+CVE-2026-102265, -102266, -102267, -102268, -102269, -102271, -102272, -102273,
+-102274, and CVE-2026-101917. All 10 record `2.14.0` as the patched version.
+
+This is exactly the stale-floor failure mode described under *Consequences →
+Negative*: the advisory feed moved and the `secure` extra's floor no longer covered
+it. The floor is therefore bumped:
+
+```toml
+"pyjwt>=2.14.0",   # via mcp[crypto]: first release containing the 10 fixes
+```
+
+Nothing else in the posture changes. `pyjwt` is still a **transitive** reached via
+`mcp[crypto]` that our code never imports, so it is still **not** declared in
+`[project.dependencies]` and stays opt-in through `[secure]`. `poetry.lock` now
+resolves `pyjwt 2.15.1`; `poetry check --lock` passes and the lockfile-scoped
+`pip-audit` job is clean again (`No known vulnerabilities found`).
