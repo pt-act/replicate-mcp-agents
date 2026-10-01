@@ -55,7 +55,7 @@ latitude = [
 # consumer-side counterpart.)
 secure = [
     "python-multipart>=0.0.31",  # via mcp: PYSEC-2026-3036/3037/3039/3040
-    "pyjwt>=2.13.0",             # via mcp[crypto]: PYSEC-2026-175/176/177/178/179
+    "pyjwt>=2.15.0",             # via mcp[crypto]: PYSEC-2026-175/176/177/178/179
     "cryptography>=50.0.0",      # via pyjwt[crypto]: GHSA-537c-gmf6-5ccf
     "idna>=3.15",                # via httpx/anyio: PYSEC-2026-215
     "pygments>=2.20.0",          # via rich/pytest: CVE-2026-4539
