@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   security-events: write   # for uploading SARIF results
+  issues: write            # for the scheduled-failure notification job below
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -213,3 +214,40 @@ jobs:
         uses: snok/install-poetry@v1.3.4
       - name: Verify lock file is up to date
         run: poetry check --lock
+
+  # ---------------------------------------------------------------------------
+  # Scheduled-failure notification
+  # ---------------------------------------------------------------------------
+  # GitHub only notifies the user who last edited the cron line when a SCHEDULED
+  # workflow fails — not the team, not org owners. The blocking `pip-audit` job
+  # can begin failing purely because the advisory feed moved, with no commit on
+  # our side (the "stale floor" mode in ADR-013). Without this job that failure
+  # is invisible until someone happens to look at the Actions tab.
+  #
+  # Deliberately scoped to `schedule` only: push and pull_request runs are
+  # already visible as failing checks on the commit / PR.
+  notify-on-scheduled-failure:
+    name: Notify on scheduled failure
+    needs: [pip-audit, wheel-audit, bandit, semgrep, detect-secrets, sbom, lockfile-check]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update a tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          label=security-ci-failure
+          body=$(printf 'The nightly `Security` workflow failed on `%s`.\n\nRun: %s\n\nUsual cause: the advisory feed flagged a version we already pin. Remedy: raise the relevant `secure` extra floor, re-lock, and document per ADR-013.\n' '${{ github.ref_name }}' "$RUN_URL")
+          gh label create "$label" --color B60205 \
+            --description "Nightly Security workflow failure" 2>/dev/null || true
+          num=$(gh issue list --label "$label" --state open --limit 1 \
+                  --json number -q '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$body"
+          else
+            gh issue create --label "$label" \
+              --title "Nightly Security workflow is failing" --body "$body"
+          fi
