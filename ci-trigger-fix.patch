@@ -1,0 +1,25 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 3f6f948..f2b29c4 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -4,7 +4,7 @@ on:
+   push:
+     branches:
+       - main
+-      - Master
++      - Main
+       - "feature/**"
+   pull_request:
+ 
+diff --git a/.github/workflows/security.yml b/.github/workflows/security.yml
+index 1ef9bba..d316e98 100644
+--- a/.github/workflows/security.yml
++++ b/.github/workflows/security.yml
+@@ -4,6 +4,7 @@ on:
+   push:
+     branches:
+       - main
++      - Main
+   pull_request:
+   schedule:
+     # Nightly at 02:00 UTC

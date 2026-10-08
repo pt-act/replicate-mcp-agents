@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - Main
   pull_request:
   schedule:
     # Nightly at 02:00 UTC
