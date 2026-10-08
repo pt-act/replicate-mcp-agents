@@ -110,3 +110,56 @@ This ADR is the canonical disclosure. The posture in one sentence: **we pin and 
 - **Upstream `mcp` floors.** File / track an item: when `mcp` publishes a release raising its own floors for `pyjwt`, `python-multipart`, `starlette`, etc., bump our `mcp` floor and remove the now-redundant entries from the `secure` extra. The `secure` extra should shrink over time, not grow.
 - **Review `wheel-audit` output on schedule.** The nightly cron already runs the Security workflow; treat any `wheel-audit` finding as a triage item in the next planning cycle.
 - **README mention.** Add a one-line pointer to `[secure]` in the README's installation section so consumers discover the opt-in without reading this ADR.
+
+## Amendment — 2026-10-08 · PyJWT advisories & default-branch trigger coverage
+
+**Stale floor (again).** The nightly `Security` workflow's blocking lockfile
+`pip-audit` job failed on the default branch with 14 advisories against the locked
+`pyjwt 2.13.0`: PYSEC-2026-4140 through PYSEC-2026-4152, plus PYSEC-2026-4183.
+Twelve record `2.14.0` as the fix; `PYSEC-2026-4141` and `PYSEC-2026-4183` are only
+fixed in `2.15.0`. The `secure` extra floor is therefore `pyjwt>=2.15.0` and
+`poetry.lock` resolves `pyjwt 2.15.0` (landed in #42).
+
+This is precisely the *stale floor* failure mode called out under **Negative**
+above: the locked version did not change, the feed did, and the version moved from
+clean to vulnerable with no change on our side. The blocking lockfile job caught it
+for our own environment, as designed. The remedy is to raise the floor and
+re-lock — never to relax the job.
+
+**Trigger coverage — action needed.** The default branch was renamed `Master` →
+`Main`. Neither workflow's `push` filter matches it: `ci.yml` lists
+`[main, Master, "feature/**"]` and `security.yml` lists `[main]`. GitHub branch
+filters are **case-sensitive**, so `main` ≠ `Main` and the `Master` entry is now
+dead. Consequences on the default branch:
+
+- `CI` runs only on pull requests (its `pull_request:` trigger is unfiltered), so
+  merges to `Main` are unverified.
+- `Security` runs only via the nightly cron — which is why this failure surfaced
+  late and why a merge to `Main` produces no scan.
+
+The fix is two lines. It is **not** applied here: this change set could not modify
+workflow files, because the automation identity lacks the GitHub App `workflows`
+permission (GitHub rejects such pushes outright).
+
+```diff
+ # .github/workflows/ci.yml
+   push:
+     branches:
+       - main
+-      - Master
++      - Main
+       - "feature/**"
+
+ # .github/workflows/security.yml
+   push:
+     branches:
+       - main
++      - Main
+```
+
+**Operational note for future branch renames.** Any rename of the default branch
+must be accompanied by an update to every `on.push.branches` / `on.schedule`-bearing
+workflow, because these filters are literal and case-sensitive. `pull_request:`
+without filters is unaffected, which is why PR checks kept working while the
+default branch silently stopped being tested.
+
