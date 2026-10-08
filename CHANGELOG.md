@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**Security CI Remediation — PyJWT advisories & default-branch trigger coverage (2026-10-08)**
+- The nightly `Security` workflow's blocking `pip-audit (lockfile / dev+CI env)`
+  job failed on the default branch: 14 advisories against the locked
+  `pyjwt 2.13.0` (PYSEC-2026-4140 through PYSEC-2026-4152, plus PYSEC-2026-4183).
+  Twelve record `2.14.0` as the fix; `PYSEC-2026-4141` and `PYSEC-2026-4183` are
+  only fixed in `2.15.0` — so a `>=2.14.0` floor is **not** sufficient.
+- Remediated in #42: the `secure` extra floor is now `pyjwt>=2.15.0` and
+  `poetry.lock` resolves `pyjwt 2.15.0`. Verified: `pip-audit -r <exported
+  lockfile>` → `No known vulnerabilities found`.
+- Scope unchanged: `pyjwt` remains a **transitive** via `mcp[crypto]` that this
+  project does not import, so it stays in `[secure]` and is not declared as a core
+  dep (ADR-013).
+- **Outstanding — not fixed by #42:** workflow trigger case-sensitivity. The default
+  branch was renamed `Master` → `Main`, but `ci.yml`'s `push` filter lists
+  `[main, Master, "feature/**"]` and `security.yml`'s lists `[main]`. GitHub branch
+  filters are case-sensitive, so `main` ≠ `Main`: neither `CI` nor `Security` runs
+  on pushes/merges to `Main` — the default branch is scanned only by the nightly
+  cron. See the ADR-013 amendment for the two-line fix.
+
 **Transitive Dependency Security Posture & CVE Remediation**
 - See ADR-013: `docs/adr/013-transitive-security-posture.md` for the full architecture and rationale.
 - Remediates 22 known vulnerabilities across 6 packages surfaced by the `pip-audit`
